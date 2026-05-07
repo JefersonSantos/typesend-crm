@@ -30,14 +30,11 @@ function LookupModal({ list, onClose }) {
   function runLookup() {
     setRunning(true); setError(''); setResults([]);
     const token = localStorage.getItem('maiver_token');
-    const es = new EventSource(`/api/lists/${list.id}/lookup?token=${token}`);
-
-    // EventSource doesn't support custom headers natively — use fetch SSE instead
-    es.close();
+    const baseUrl = (import.meta.env.VITE_API_URL || '/api').replace(/\/$/, '');
 
     // Use fetch with ReadableStream for SSE with auth header
     const ctrl = new AbortController();
-    fetch(`/api/lists/${list.id}/lookup`, {
+    fetch(`${baseUrl}/lists/${list.id}/lookup`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}` },
       signal: ctrl.signal,
