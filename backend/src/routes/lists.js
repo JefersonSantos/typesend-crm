@@ -73,8 +73,27 @@ router.get('/:id/contacts', (req, res) => {
   const { limit = 50, offset = 0 } = req.query;
   const list = db.prepare('SELECT * FROM lists WHERE id = ? AND tenant_id = ?').get(req.params.id, req.auth.tenantId);
   if (!list) return res.status(404).json({ error: 'Lista não encontrada' });
-  const contacts = db.prepare('SELECT * FROM list_contacts WHERE list_id = ? LIMIT ? OFFSET ?').all(req.params.id, Number(limit), Number(offset));
-  res.json({ list: { ...list, columns: JSON.parse(list.columns) }, contacts: contacts.map(c => ({ ...c, data: JSON.parse(c.data) })), total: list.contact_count });
+
+  // Join with lookup_results and optouts for enriched contact data
+  const contacts = db.prepare(`
+    SELECT lc.*,
+           lr.valid       as lookup_valid,
+           lr.line_type   as lookup_line_type,
+           lr.carrier     as lookup_carrier,
+           lr.looked_up_at,
+           CASE WHEN o.phone IS NOT NULL THEN 1 ELSE 0 END as opted_out
+    FROM list_contacts lc
+    LEFT JOIN lookup_results lr ON lr.contact_id = lc.id
+    LEFT JOIN optouts o ON o.phone = lc.phone
+    WHERE lc.list_id = ?
+    LIMIT ? OFFSET ?
+  `).all(req.params.id, Number(limit), Number(offset));
+
+  res.json({
+    list: { ...list, columns: JSON.parse(list.columns) },
+    contacts: contacts.map(c => ({ ...c, data: JSON.parse(c.data) })),
+    total: list.contact_count,
+  });
 });
 
 router.delete('/:id', (req, res) => {

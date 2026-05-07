@@ -14,14 +14,20 @@ function StatusBadge({ status }) {
   return <span className={`badge ${cls}`}>{label}</span>;
 }
 
-function Progress({ sent, total }) {
+function Progress({ sent, total, opted_out_count, skipped_count }) {
   const pct = total > 0 ? Math.round((sent / total) * 100) : 0;
   return (
-    <div style={{ width: 120 }}>
+    <div style={{ width: 140 }}>
       <div style={{ background: '#e5e7eb', borderRadius: 999, height: 6, overflow: 'hidden' }}>
         <div style={{ width: `${pct}%`, background: '#4f46e5', height: '100%', transition: 'width 0.3s' }} />
       </div>
       <p style={{ fontSize: 11, color: '#6b7280', marginTop: 2 }}>{sent}/{total} ({pct}%)</p>
+      {opted_out_count > 0 && (
+        <p style={{ fontSize: 10, color: '#ef4444', margin: '1px 0 0' }}>🚫 {opted_out_count} opt-out</p>
+      )}
+      {skipped_count > 0 && (
+        <p style={{ fontSize: 10, color: '#f59e0b', margin: '1px 0 0' }}>⏭ {skipped_count} ignorados</p>
+      )}
     </div>
   );
 }
@@ -36,6 +42,8 @@ function NewCampaignModal({ onClose, onCreated }) {
   const [selectedList, setSelectedList] = useState(null);
   const [selectedTemplate, setSelectedTemplate] = useState(null);
   const [varMap, setVarMap] = useState({}); // { templateVar: listColumn }
+  const [allowedLineTypes, setAllowedLineTypes] = useState([]); // e.g. ['mobile']
+  const [filterByLineType, setFilterByLineType] = useState(false);
 
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -90,6 +98,7 @@ function NewCampaignModal({ onClose, onCreated }) {
         list_id: selectedList.id,
         template_id: selectedTemplate.id,
         variable_map: varMap,
+        allowed_line_types: filterByLineType && allowedLineTypes.length ? allowedLineTypes : null,
       });
       onCreated(data);
     } catch (err) {
@@ -97,6 +106,12 @@ function NewCampaignModal({ onClose, onCreated }) {
     } finally {
       setSaving(false);
     }
+  }
+
+  function toggleLineType(type) {
+    setAllowedLineTypes(prev =>
+      prev.includes(type) ? prev.filter(t => t !== type) : [...prev, type]
+    );
   }
 
   return (
@@ -156,6 +171,37 @@ function NewCampaignModal({ onClose, onCreated }) {
                     </div>
                   ))}
                 </div>
+              )}
+            </div>
+
+            {/* Line type filter (requires prior lookup) */}
+            <div style={{ background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: 8, padding: '12px 16px', marginTop: 4 }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontWeight: 600, fontSize: 13 }}>
+                <input type="checkbox" checked={filterByLineType} onChange={e => { setFilterByLineType(e.target.checked); setAllowedLineTypes(e.target.checked ? ['mobile'] : []); }} />
+                Filtrar por tipo de linha (requer Lookup)
+              </label>
+              {filterByLineType && (
+                <div style={{ display: 'flex', gap: 12, marginTop: 10, flexWrap: 'wrap' }}>
+                  {[
+                    { type: 'mobile',   label: '📱 Móvel' },
+                    { type: 'landline', label: '☎ Fixo' },
+                    { type: 'voip',     label: '💻 VoIP' },
+                    { type: 'unknown',  label: '❓ Desconhecido' },
+                  ].map(({ type, label }) => (
+                    <label key={type} style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: 13 }}>
+                      <input type="checkbox" checked={allowedLineTypes.includes(type)} onChange={() => toggleLineType(type)} />
+                      {label}
+                    </label>
+                  ))}
+                </div>
+              )}
+              {filterByLineType && allowedLineTypes.length === 0 && (
+                <p style={{ fontSize: 11, color: '#ef4444', marginTop: 6 }}>Selecione ao menos um tipo de linha.</p>
+              )}
+              {filterByLineType && (
+                <p style={{ fontSize: 11, color: '#9ca3af', marginTop: 6 }}>
+                  Contatos sem resultado de lookup serão ignorados (não enviados).
+                </p>
               )}
             </div>
           </>
@@ -379,7 +425,7 @@ export default function CampaignsPage() {
                       {c.status === 'draft' ? (
                         <span style={{ fontSize: 12, color: '#9ca3af' }}>{c.total.toLocaleString('pt-BR')} contatos</span>
                       ) : (
-                        <Progress sent={c.sent} total={c.total} />
+                        <Progress sent={c.sent} total={c.total} opted_out_count={c.opted_out_count} skipped_count={c.skipped_count} />
                       )}
                     </td>
                     <td style={{ fontFamily: 'monospace', fontSize: 12 }}>

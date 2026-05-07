@@ -323,31 +323,61 @@ function ContactsDrawer({ list, onClose }) {
       .then(({ data: d }) => setData(d));
   }, [list.id, page]);
 
-  const cols = list.columns.filter((c) => c !== list.phone_column).slice(0, 4);
+  const cols = list.columns.filter((c) => c !== list.phone_column).slice(0, 3);
+
+  const LINE_BADGE = {
+    mobile:   { label: '📱 Móvel',    bg: '#f0fdf4', color: '#16a34a' },
+    landline: { label: '☎ Fixo',      bg: '#f3f4f6', color: '#6b7280' },
+    voip:     { label: '💻 VoIP',     bg: '#eff6ff', color: '#3b82f6' },
+    unknown:  { label: '❓ Desc.',    bg: '#fafafa',  color: '#9ca3af' },
+  };
 
   return (
     <div className="modal-backdrop" onClick={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="modal" style={{ maxWidth: 700 }}>
+      <div className="modal" style={{ maxWidth: 780 }}>
         <h2 className="modal-title">{list.name} — {list.contact_count} contatos</h2>
         <div style={{ overflowX: 'auto', maxHeight: 420, overflowY: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
             <thead>
               <tr>
                 <th style={{ padding: '8px 10px', background: '#f9fafb', textAlign: 'left', borderBottom: '1px solid #e5e7eb' }}>Telefone</th>
+                <th style={{ padding: '8px 10px', background: '#f9fafb', textAlign: 'left', borderBottom: '1px solid #e5e7eb' }}>Lookup</th>
+                <th style={{ padding: '8px 10px', background: '#f9fafb', textAlign: 'left', borderBottom: '1px solid #e5e7eb' }}>Status</th>
                 {cols.map((c) => (
                   <th key={c} style={{ padding: '8px 10px', background: '#f9fafb', textAlign: 'left', borderBottom: '1px solid #e5e7eb' }}>{c}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {data.contacts.map((c) => (
-                <tr key={c.id}>
-                  <td style={{ padding: '8px 10px', borderBottom: '1px solid #f3f4f6', fontFamily: 'monospace', fontSize: 12 }}>{c.phone}</td>
-                  {cols.map((col) => (
-                    <td key={col} style={{ padding: '8px 10px', borderBottom: '1px solid #f3f4f6' }}>{c.data[col] || '—'}</td>
-                  ))}
-                </tr>
-              ))}
+              {data.contacts.map((c) => {
+                const badge = c.lookup_line_type ? LINE_BADGE[c.lookup_line_type] || LINE_BADGE.unknown : null;
+                return (
+                  <tr key={c.id} style={{ opacity: c.opted_out ? 0.5 : 1 }}>
+                    <td style={{ padding: '8px 10px', borderBottom: '1px solid #f3f4f6', fontFamily: 'monospace', fontSize: 12 }}>
+                      {c.phone}
+                    </td>
+                    <td style={{ padding: '8px 10px', borderBottom: '1px solid #f3f4f6' }}>
+                      {badge ? (
+                        <span style={{ background: badge.bg, color: badge.color, padding: '2px 7px', borderRadius: 999, fontSize: 11, fontWeight: 600 }}>
+                          {badge.label}
+                        </span>
+                      ) : (
+                        <span style={{ color: '#d1d5db', fontSize: 11 }}>—</span>
+                      )}
+                    </td>
+                    <td style={{ padding: '8px 10px', borderBottom: '1px solid #f3f4f6' }}>
+                      {c.opted_out ? (
+                        <span style={{ background: '#fee2e2', color: '#dc2626', padding: '2px 7px', borderRadius: 999, fontSize: 11, fontWeight: 600 }}>🚫 Opt-out</span>
+                      ) : (
+                        <span style={{ color: '#d1d5db', fontSize: 11 }}>—</span>
+                      )}
+                    </td>
+                    {cols.map((col) => (
+                      <td key={col} style={{ padding: '8px 10px', borderBottom: '1px solid #f3f4f6' }}>{c.data[col] || '—'}</td>
+                    ))}
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

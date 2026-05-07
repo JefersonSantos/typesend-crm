@@ -44,7 +44,13 @@ router.get('/:id', (req, res) => {
     WHERE c.id = ? AND c.tenant_id = ?
   `).get(req.params.id, req.auth.tenantId);
   if (!c) return res.status(404).json({ error: 'Campanha não encontrada' });
-  res.json({ ...c, variable_map: JSON.parse(c.variable_map), list_columns: c.list_columns ? JSON.parse(c.list_columns) : [], template_variables: c.template_variables ? JSON.parse(c.template_variables) : [] });
+  res.json({
+    ...c,
+    variable_map:       JSON.parse(c.variable_map),
+    list_columns:       c.list_columns       ? JSON.parse(c.list_columns)       : [],
+    template_variables: c.template_variables ? JSON.parse(c.template_variables) : [],
+    allowed_line_types: c.allowed_line_types ? JSON.parse(c.allowed_line_types) : null,
+  });
 });
 
 router.get('/:id/messages', (req, res) => {
@@ -80,7 +86,7 @@ router.post('/estimate', (req, res) => {
 
 /* ── Create ──────────────────────────────────────────────────────────────── */
 router.post('/', (req, res) => {
-  const { name, list_id, segment_id, template_id, variable_map, scheduled_at } = req.body;
+  const { name, list_id, segment_id, template_id, variable_map, scheduled_at, allowed_line_types } = req.body;
   if (!name || !list_id || !template_id || !variable_map) return res.status(400).json({ error: 'Campos obrigatórios' });
 
   const list = db.prepare('SELECT * FROM lists WHERE id = ? AND tenant_id = ?').get(list_id, req.auth.tenantId);
@@ -98,11 +104,12 @@ router.post('/', (req, res) => {
   const estimate = estimateCampaign(template.body, contactCount);
   const status = scheduled_at ? 'scheduled' : 'draft';
   const id = uuidv4();
+  const lineTypesJson = allowed_line_types?.length ? JSON.stringify(allowed_line_types) : null;
 
   db.prepare(`
-    INSERT INTO campaigns (id, tenant_id, name, list_id, segment_id, template_id, variable_map, status, scheduled_at, total, cost_estimate)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(id, req.auth.tenantId, name, list_id, segment_id || null, template_id, JSON.stringify(variable_map), status, scheduled_at || null, contactCount, estimate.totalCost);
+    INSERT INTO campaigns (id, tenant_id, name, list_id, segment_id, template_id, variable_map, status, scheduled_at, total, cost_estimate, allowed_line_types)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(id, req.auth.tenantId, name, list_id, segment_id || null, template_id, JSON.stringify(variable_map), status, scheduled_at || null, contactCount, estimate.totalCost, lineTypesJson);
 
   writeLog(req.auth.tenantId, req.auth.sub, 'info', 'campaign', `Campanha criada: ${name}`, { campaignId: id });
   const campaign = db.prepare('SELECT * FROM campaigns WHERE id = ?').get(id);
@@ -115,7 +122,6 @@ router.post('/:id/send', async (req, res) => {
   if (!campaign) return res.status(404).json({ error: 'Campanha não encontrada' });
   if (!['draft', 'scheduled'].includes(campaign.status)) return res.status(409).json({ error: `Status inválido: ${campaign.status}` });
 
-  // Check credits
   const tenant = db.prepare('SELECT credit_balance FROM tenants WHERE id = ?').get(req.auth.tenantId);
   if (tenant.credit_balance < campaign.cost_estimate) {
     return res.status(402).json({ error: `Créditos insuficientes. Saldo: $${tenant.credit_balance.toFixed(4)} | Estimado: $${campaign.cost_estimate.toFixed(4)}` });
@@ -141,11 +147,26 @@ router.delete('/:id', (req, res) => {
 async function runCampaign(campaignId, tenantId) {
   try {
     const campaign = db.prepare('SELECT * FROM campaigns WHERE id = ?').get(campaignId);
-    const variableMap = JSON.parse(campaign.variable_map);
-    const template = db.prepare('SELECT * FROM templates WHERE id = ?').get(campaign.template_id);
-    const segment = campaign.segment_id ? db.prepare('SELECT filters FROM segments WHERE id = ?').get(campaign.segment_id) : null;
-    const filters = segment ? JSON.parse(segment.filters) : [];
+    const variableMap  = JSON.parse(campaign.variable_map);
+    const template     = db.prepare('SELECT * FROM templates WHERE id = ?').get(campaign.template_id);
+    const segment      = campaign.segment_id ? db.prepare('SELECT filters FROM segments WHERE id = ?').get(campaign.segment_id) : null;
+    const filters      = segment ? JSON.parse(segment.filters) : [];
+    const allowedTypes = campaign.allowed_line_types ? JSON.parse(campaign.allowed_line_types) : null;
 
+    // Load global opt-out list into a Set for O(1) lookup
+    const optedOutPhones = new Set(
+      db.prepare('SELECT phone FROM optouts').all().map(r => r.phone)
+    );
+
+    // Load lookup results for this list (for line-type filtering)
+    const lookupMap = {};
+    if (allowedTypes?.length) {
+      db.prepare('SELECT contact_id, line_type FROM lookup_results WHERE list_id = ?')
+        .all(campaign.list_id)
+        .forEach(r => { lookupMap[r.contact_id] = r.line_type; });
+    }
+
+    // Fetch and apply segment filters
     let contacts = db.prepare('SELECT * FROM list_contacts WHERE list_id = ?').all(campaign.list_id);
     if (filters.length) {
       contacts = contacts.filter(c => {
@@ -163,14 +184,33 @@ async function runCampaign(campaignId, tenantId) {
 
     db.prepare('UPDATE campaigns SET total = ? WHERE id = ?').run(contacts.length, campaignId);
 
-    const ins = db.prepare('INSERT INTO messages (id, campaign_id, contact_id, phone, body) VALUES (?, ?, ?, ?, ?)');
-    let sent = 0, failedCount = 0, totalCost = 0;
+    const ins = db.prepare('INSERT INTO messages (id, campaign_id, contact_id, phone, body, status) VALUES (?, ?, ?, ?, ?, ?)');
+    let sent = 0, failedCount = 0, optedOutCount = 0, skippedCount = 0;
 
     for (const contact of contacts) {
+      // Skip opted-out contacts
+      if (optedOutPhones.has(contact.phone)) {
+        ins.run(uuidv4(), campaignId, contact.id, contact.phone, '', 'opted_out');
+        optedOutCount++;
+        db.prepare('UPDATE campaigns SET opted_out_count = ? WHERE id = ?').run(optedOutCount, campaignId);
+        continue;
+      }
+
+      // Skip by line type if filter is active
+      if (allowedTypes?.length) {
+        const lineType = lookupMap[contact.id] || null;
+        if (!lineType || !allowedTypes.includes(lineType)) {
+          ins.run(uuidv4(), campaignId, contact.id, contact.phone, '', 'skipped');
+          skippedCount++;
+          db.prepare('UPDATE campaigns SET skipped_count = ? WHERE id = ?').run(skippedCount, campaignId);
+          continue;
+        }
+      }
+
       const contactData = JSON.parse(contact.data);
       const body = renderTemplate(template.body, variableMap, contactData);
       const msgId = uuidv4();
-      ins.run(msgId, campaignId, contact.id, contact.phone, body);
+      ins.run(msgId, campaignId, contact.id, contact.phone, body, 'queued');
 
       try {
         const result = await sendSMS(contact.phone, body, tenantId);
@@ -184,13 +224,14 @@ async function runCampaign(campaignId, tenantId) {
       await new Promise(r => setTimeout(r, 110));
     }
 
-    // Deduct estimated cost from credits
     if (campaign.cost_estimate > 0) {
       await deductCredits(tenantId, campaign.cost_estimate, `Campanha: ${campaign.name}`);
     }
 
-    db.prepare("UPDATE campaigns SET status = 'completed', completed_at = datetime('now') WHERE id = ?").run(campaignId);
-    writeLog(tenantId, null, 'info', 'campaign', `Campanha concluída: ${campaign.name}`, { sent, failed: failedCount });
+    db.prepare("UPDATE campaigns SET status = 'completed', completed_at = datetime('now'), opted_out_count = ?, skipped_count = ? WHERE id = ?")
+      .run(optedOutCount, skippedCount, campaignId);
+
+    writeLog(tenantId, null, 'info', 'campaign', `Campanha concluída: ${campaign.name}`, { sent, failed: failedCount, opted_out: optedOutCount, skipped: skippedCount });
   } catch (err) {
     db.prepare("UPDATE campaigns SET status = 'failed' WHERE id = ?").run(campaignId);
     writeLog(tenantId, null, 'error', 'campaign', `Erro na campanha ${campaignId}: ${err.message}`);

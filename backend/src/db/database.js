@@ -238,7 +238,27 @@ db.exec(`
   );
 
   CREATE INDEX IF NOT EXISTS idx_orders_tenant ON orders(tenant_id);
+
+  CREATE TABLE IF NOT EXISTS optouts (
+    id TEXT PRIMARY KEY,
+    phone TEXT UNIQUE NOT NULL,
+    reason TEXT DEFAULT 'STOP',
+    tenant_id TEXT,
+    opted_out_at TEXT DEFAULT (datetime('now'))
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_optouts_phone ON optouts(phone);
 `);
+
+/* ── Migrations: add columns to existing tables ────────────────────────── */
+const migrations = [
+  'ALTER TABLE campaigns ADD COLUMN opted_out_count INTEGER DEFAULT 0',
+  'ALTER TABLE campaigns ADD COLUMN skipped_count   INTEGER DEFAULT 0',
+  'ALTER TABLE campaigns ADD COLUMN allowed_line_types TEXT DEFAULT NULL',
+];
+for (const sql of migrations) {
+  try { db.exec(sql); } catch (_) { /* column already exists */ }
+}
 
 /* ── Default pricing rows ──────────────────────────────────────────────── */
 const pricingDefaults = [
