@@ -1,6 +1,6 @@
 const jwt = require('jsonwebtoken');
 
-const SECRET = () => process.env.JWT_SECRET || 'maiver-dev-secret-change-in-prod';
+const SECRET = () => process.env.JWT_SECRET || 'typesend-dev-secret-change-in-prod';
 
 function signToken(payload, expiresIn = '7d') {
   return jwt.sign(payload, SECRET(), { expiresIn });

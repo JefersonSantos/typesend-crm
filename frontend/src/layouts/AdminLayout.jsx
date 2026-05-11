@@ -10,10 +10,11 @@ export default function AdminLayout({ children }) {
   return (
     <div className="layout">
       <aside className="sidebar sidebar-admin">
-        <div className="sidebar-logo">Maiver <span style={{ color: '#f59e0b' }}>Admin</span></div>
+        <div className="sidebar-logo">Zap<span style={{ color: '#25D366' }}>CRM</span> <small style={{ color: '#6b7280', fontSize: 11 }}>Admin</small></div>
         <nav>
           <NavLink to="/admin" end>📊 Dashboard</NavLink>
           <NavLink to="/admin/tenants">🏢 Contas</NavLink>
+          <NavLink to="/admin/instances">📱 Instâncias</NavLink>
           <NavLink to="/admin/pricing">💰 Preços</NavLink>
           <NavLink to="/admin/billing">💳 Billing</NavLink>
           <NavLink to="/admin/logs">📋 Logs</NavLink>

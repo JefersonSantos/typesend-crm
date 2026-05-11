@@ -29,7 +29,7 @@ function LookupModal({ list, onClose }) {
 
   function runLookup() {
     setRunning(true); setError(''); setResults([]);
-    const token = localStorage.getItem('maiver_token');
+    const token = localStorage.getItem('typesend_token');
     const baseUrl = (import.meta.env.VITE_API_URL || '/api').replace(/\/$/, '');
 
     // Use fetch with ReadableStream for SSE with auth header

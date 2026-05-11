@@ -1,50 +1,67 @@
-const db = require('../db/database');
+const { one, run } = require('../db/database');
+const { randomUUID } = require('crypto');
 
-function getPricing(resourceType) {
-  const row = db.prepare('SELECT twilio_base_cost, markup FROM pricing WHERE resource_type = ?').get(resourceType);
+/* ─────────────────────────────────────────────────────────────────────────
+   Tipos de conversa WhatsApp (categoria do template → resource_type)
+   ───────────────────────────────────────────────────────────────────────── */
+
+const CONVERSATION_TYPES = {
+  MARKETING:      'whatsapp_marketing',
+  UTILITY:        'whatsapp_utility',
+  AUTHENTICATION: 'whatsapp_authentication',
+  SERVICE:        'whatsapp_service',
+};
+
+function categoryToResourceType(category) {
+  const map = {
+    MARKETING:      'whatsapp_marketing',
+    UTILITY:        'whatsapp_utility',
+    AUTHENTICATION: 'whatsapp_authentication',
+  };
+  return map[category?.toUpperCase()] || 'whatsapp_marketing';
+}
+
+/** Retorna custo total (base Meta + markup) para um resource_type */
+async function getPricing(resourceType) {
+  const row = await one('SELECT meta_base_cost, markup FROM pricing WHERE resource_type = $1', [resourceType]);
+  if (!row) return { base: 0, markup: 0, total: 0 };
+  const base   = parseFloat(row.meta_base_cost) || 0;
+  const markup = parseFloat(row.markup) || 0;
+  return { base, markup, total: +(base + markup).toFixed(6) };
+}
+
+/** Custo de uma conversa dado a categoria do template */
+async function calcConversationCost(templateCategory) {
+  return getPricing(categoryToResourceType(templateCategory));
+}
+
+/** Estimativa de custo total de campanha */
+async function estimateCampaign(templateCategory, contactCount) {
+  const pricing = await calcConversationCost(templateCategory);
   return {
-    twilioBase: row?.twilio_base_cost ?? 0,
-    markup:     row?.markup           ?? 0,
-    perUnit:    (row?.twilio_base_cost ?? 0) + (row?.markup ?? 0),
+    contact_count:         contactCount,
+    cost_per_conversation: pricing.total,
+    meta_base_cost:        pricing.base,
+    markup:                pricing.markup,
+    total_cost:            +(pricing.total * contactCount).toFixed(6),
+    resource_type:         categoryToResourceType(templateCategory),
   };
 }
 
-function calcMessageCost(body) {
-  // Detect UCS-2: any character outside basic GSM-7 set
-  const isUCS2 = /[^\x00-\x7F £¤¥§¿À-ÖØ-öø-ÿΔΦΓΛΩΠΨΣΘΞ€]/.test(body);
-  const singleLimit = isUCS2 ? 70  : 160;
-  const multiLimit  = isUCS2 ? 67  : 153;
-  const len = body.length;
-  const smsCount = len <= singleLimit ? 1 : Math.ceil(len / multiLimit);
-  return { smsCount, encoding: isUCS2 ? 'UCS-2' : 'GSM-7' };
-}
-
-function estimateCampaign(templateBody, contactCount) {
-  const { smsCount, encoding } = calcMessageCost(templateBody);
-  const { twilioBase, markup, perUnit } = getPricing('sms_outbound');
-  const totalSMS  = smsCount * contactCount;
-  const totalCost = +(totalSMS * perUnit).toFixed(6);
-
-  return {
-    smsCount,
-    encoding,
-    totalSMS,
-    perSMS:     +perUnit.toFixed(6),
-    twilioBase: +twilioBase.toFixed(6),
-    markup:     +markup.toFixed(6),
-    totalCost,
-    contactCount,
-  };
-}
-
+/** Debita créditos do tenant e registra transação */
 async function deductCredits(tenantId, amount, description) {
-  const { v4: uuidv4 } = require('uuid');
-  db.prepare(
-    'UPDATE tenants SET credit_balance = credit_balance - ? WHERE id = ?'
-  ).run(amount, tenantId);
-  db.prepare(
-    'INSERT INTO credit_transactions (id, tenant_id, amount, type, description) VALUES (?, ?, ?, ?, ?)'
-  ).run(uuidv4(), tenantId, -amount, 'usage', description);
+  await run('UPDATE tenants SET credit_balance = credit_balance - $1 WHERE id = $2', [amount, tenantId]);
+  await run(
+    'INSERT INTO credit_transactions (id, tenant_id, amount, type, description) VALUES ($1, $2, $3, $4, $5)',
+    [randomUUID(), tenantId, -Math.abs(amount), 'usage', description]
+  );
 }
 
-module.exports = { getPricing, calcMessageCost, estimateCampaign, deductCredits };
+module.exports = {
+  getPricing,
+  categoryToResourceType,
+  calcConversationCost,
+  estimateCampaign,
+  deductCredits,
+  CONVERSATION_TYPES,
+};

@@ -3,7 +3,7 @@ import { ai as aiApi } from '../../services/api';
 import UserLayout from '../../layouts/UserLayout';
 
 const MODELS = [
-  { value: 'claude-haiku-4-5-20251001',  label: 'Claude Haiku 4.5 — Mais rápido e econômico (recomendado para SMS)' },
+  { value: 'claude-haiku-4-5-20251001',  label: 'Claude Haiku 4.5 — Mais rápido e econômico (recomendado)' },
   { value: 'claude-sonnet-4-6',          label: 'Claude Sonnet 4.6 — Equilíbrio entre velocidade e qualidade' },
   { value: 'claude-opus-4-7',            label: 'Claude Opus 4.7 — Máxima capacidade (mais caro)' },
 ];

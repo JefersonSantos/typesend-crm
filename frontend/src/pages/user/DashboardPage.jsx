@@ -44,7 +44,7 @@ export default function DashboardPage() {
               {[
                 { icon: '📋', label: 'Importar lista de contatos', href: '/lists' },
                 { icon: '✏️', label: 'Criar modelo de mensagem', href: '/templates' },
-                { icon: '🚀', label: 'Criar campanha SMS', href: '/campaigns' },
+                { icon: '🚀', label: 'Criar campanha WhatsApp', href: '/campaigns' },
                 { icon: '💳', label: 'Adicionar créditos', href: '/billing' },
               ].map(item => (
                 <a key={item.label} href={item.href} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 12px', background: 'var(--gray-50)', borderRadius: 8, fontSize: 14, color: 'var(--gray-700)', transition: 'background 0.15s' }}

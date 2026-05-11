@@ -64,7 +64,7 @@ export default function ChatPage() {
               <div className="empty" style={{ padding: 32 }}>
                 <div style={{ fontSize: 32 }}>💬</div>
                 <p>Sem conversas ainda</p>
-                <p style={{ fontSize: 11 }}>Configure o webhook de inbound SMS no Twilio</p>
+                <p style={{ fontSize: 11 }}>As conversas aparecem aqui quando clientes enviarem mensagens via WhatsApp</p>
               </div>
             ) : conversations.map(c => (
               <div key={c.id} onClick={() => setSelected(c)}

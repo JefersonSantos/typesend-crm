@@ -1,7 +1,7 @@
 const express = require('express');
-const { v4: uuidv4 } = require('uuid');
-const db = require('../db/database');
-const { sendSMS } = require('../services/twilio');
+const { randomUUID } = require('crypto');
+const { one, all, run } = require('../db/database');
+const { sendTemplateMessage } = require('../services/whatsapp');
 const { renderTemplate } = require('../services/templateRenderer');
 const { estimateCampaign, deductCredits } = require('../services/costCalculator');
 const { authMiddleware, tenantOnly } = require('../middleware/auth');
@@ -10,164 +10,239 @@ const { writeLog } = require('./logs');
 const router = express.Router();
 router.use(authMiddleware, tenantOnly);
 
-/* ── List ────────────────────────────────────────────────────────────────── */
-router.get('/', (req, res) => {
-  const campaigns = db.prepare(`
-    SELECT c.*, l.name as list_name, t.name as template_name,
-           s.name as segment_name
-    FROM campaigns c
-    LEFT JOIN lists l ON l.id = c.list_id
-    LEFT JOIN templates t ON t.id = c.template_id
-    LEFT JOIN segments s ON s.id = c.segment_id
-    WHERE c.tenant_id = ? ORDER BY c.created_at DESC
-  `).all(req.auth.tenantId);
-  res.json(campaigns.map(c => ({ ...c, variable_map: JSON.parse(c.variable_map) })));
-});
-
-router.get('/stats', (req, res) => {
-  const stats = db.prepare(`
-    SELECT COUNT(*) as total_campaigns, SUM(total) as total_messages,
-    SUM(delivered) as total_delivered, SUM(failed_count) as total_failed,
-    ROUND(SUM(total_cost), 4) as total_cost
-    FROM campaigns WHERE tenant_id = ?
-  `).get(req.auth.tenantId);
-  res.json(stats);
-});
-
-router.get('/:id', (req, res) => {
-  const c = db.prepare(`
-    SELECT c.*, l.name as list_name, l.columns as list_columns, l.phone_column,
-           t.name as template_name, t.body as template_body, t.variables as template_variables
-    FROM campaigns c
-    LEFT JOIN lists l ON l.id = c.list_id
-    LEFT JOIN templates t ON t.id = c.template_id
-    WHERE c.id = ? AND c.tenant_id = ?
-  `).get(req.params.id, req.auth.tenantId);
-  if (!c) return res.status(404).json({ error: 'Campanha não encontrada' });
-  res.json({
-    ...c,
-    variable_map:       JSON.parse(c.variable_map),
-    list_columns:       c.list_columns       ? JSON.parse(c.list_columns)       : [],
-    template_variables: c.template_variables ? JSON.parse(c.template_variables) : [],
-    allowed_line_types: c.allowed_line_types ? JSON.parse(c.allowed_line_types) : null,
-  });
-});
-
-router.get('/:id/messages', (req, res) => {
-  const { limit = 50, offset = 0, status } = req.query;
-  const c = db.prepare('SELECT id FROM campaigns WHERE id = ? AND tenant_id = ?').get(req.params.id, req.auth.tenantId);
-  if (!c) return res.status(404).json({ error: 'Campanha não encontrada' });
-  let q = 'SELECT * FROM messages WHERE campaign_id = ?'; const params = [req.params.id];
-  if (status) { q += ' AND status = ?'; params.push(status); }
-  q += ' ORDER BY sent_at DESC LIMIT ? OFFSET ?'; params.push(Number(limit), Number(offset));
-  const total = db.prepare('SELECT COUNT(*) as n FROM messages WHERE campaign_id = ?').get(req.params.id);
-  res.json({ messages: db.prepare(q).all(...params), total: total.n });
-});
-
-/* ── Estimate cost ───────────────────────────────────────────────────────── */
-router.post('/estimate', (req, res) => {
-  const { template_id, list_id, segment_id } = req.body;
-  const template = db.prepare('SELECT body FROM templates WHERE id = ? AND tenant_id = ?').get(template_id, req.auth.tenantId);
-  if (!template) return res.status(404).json({ error: 'Modelo não encontrado' });
-
-  let count;
-  if (segment_id) {
-    const seg = db.prepare('SELECT contact_count FROM segments WHERE id = ? AND tenant_id = ?').get(segment_id, req.auth.tenantId);
-    count = seg?.contact_count || 0;
-  } else {
-    const list = db.prepare('SELECT contact_count FROM lists WHERE id = ? AND tenant_id = ?').get(list_id, req.auth.tenantId);
-    count = list?.contact_count || 0;
-  }
-
-  const estimate = estimateCampaign(template.body, count);
-  const balance = db.prepare('SELECT credit_balance FROM tenants WHERE id = ?').get(req.auth.tenantId);
-  res.json({ ...estimate, balance: balance.credit_balance, sufficient: balance.credit_balance >= estimate.totalCost });
-});
-
-/* ── Create ──────────────────────────────────────────────────────────────── */
-router.post('/', (req, res) => {
-  const { name, list_id, segment_id, template_id, variable_map, scheduled_at, allowed_line_types } = req.body;
-  if (!name || !list_id || !template_id || !variable_map) return res.status(400).json({ error: 'Campos obrigatórios' });
-
-  const list = db.prepare('SELECT * FROM lists WHERE id = ? AND tenant_id = ?').get(list_id, req.auth.tenantId);
-  if (!list) return res.status(404).json({ error: 'Lista não encontrada' });
-
-  const template = db.prepare('SELECT * FROM templates WHERE id = ? AND tenant_id = ?').get(template_id, req.auth.tenantId);
-  if (!template) return res.status(404).json({ error: 'Modelo não encontrado' });
-
-  let contactCount = list.contact_count;
-  if (segment_id) {
-    const seg = db.prepare('SELECT contact_count FROM segments WHERE id = ? AND tenant_id = ?').get(segment_id, req.auth.tenantId);
-    if (seg) contactCount = seg.contact_count;
-  }
-
-  const estimate = estimateCampaign(template.body, contactCount);
-  const status = scheduled_at ? 'scheduled' : 'draft';
-  const id = uuidv4();
-  const lineTypesJson = allowed_line_types?.length ? JSON.stringify(allowed_line_types) : null;
-
-  db.prepare(`
-    INSERT INTO campaigns (id, tenant_id, name, list_id, segment_id, template_id, variable_map, status, scheduled_at, total, cost_estimate, allowed_line_types)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(id, req.auth.tenantId, name, list_id, segment_id || null, template_id, JSON.stringify(variable_map), status, scheduled_at || null, contactCount, estimate.totalCost, lineTypesJson);
-
-  writeLog(req.auth.tenantId, req.auth.sub, 'info', 'campaign', `Campanha criada: ${name}`, { campaignId: id });
-  const campaign = db.prepare('SELECT * FROM campaigns WHERE id = ?').get(id);
-  res.status(201).json({ ...campaign, variable_map: JSON.parse(campaign.variable_map) });
-});
-
-/* ── Send ────────────────────────────────────────────────────────────────── */
-router.post('/:id/send', async (req, res) => {
-  const campaign = db.prepare('SELECT * FROM campaigns WHERE id = ? AND tenant_id = ?').get(req.params.id, req.auth.tenantId);
-  if (!campaign) return res.status(404).json({ error: 'Campanha não encontrada' });
-  if (!['draft', 'scheduled'].includes(campaign.status)) return res.status(409).json({ error: `Status inválido: ${campaign.status}` });
-
-  const tenant = db.prepare('SELECT credit_balance FROM tenants WHERE id = ?').get(req.auth.tenantId);
-  if (tenant.credit_balance < campaign.cost_estimate) {
-    return res.status(402).json({ error: `Créditos insuficientes. Saldo: $${tenant.credit_balance.toFixed(4)} | Estimado: $${campaign.cost_estimate.toFixed(4)}` });
-  }
-
-  db.prepare("UPDATE campaigns SET status = 'sending', started_at = datetime('now') WHERE id = ?").run(campaign.id);
-  writeLog(req.auth.tenantId, req.auth.sub, 'info', 'campaign', `Envio iniciado: ${campaign.name}`, { campaignId: campaign.id });
-  res.json({ ok: true });
-
-  process.nextTick(() => runCampaign(campaign.id, req.auth.tenantId));
-});
-
-router.delete('/:id', (req, res) => {
-  const c = db.prepare('SELECT id, status FROM campaigns WHERE id = ? AND tenant_id = ?').get(req.params.id, req.auth.tenantId);
-  if (!c) return res.status(404).json({ error: 'Campanha não encontrada' });
-  if (c.status === 'sending') return res.status(409).json({ error: 'Não é possível excluir campanha em envio' });
-  db.prepare('DELETE FROM messages WHERE campaign_id = ?').run(req.params.id);
-  db.prepare('DELETE FROM campaigns WHERE id = ?').run(req.params.id);
-  res.status(204).send();
-});
-
-/* ── Campaign runner ─────────────────────────────────────────────────────── */
-async function runCampaign(campaignId, tenantId) {
+/* ─────────────────────────────────────────────────────────────────────────
+   LISTAR campanhas
+   ───────────────────────────────────────────────────────────────────────── */
+router.get('/', async (req, res) => {
   try {
-    const campaign = db.prepare('SELECT * FROM campaigns WHERE id = ?').get(campaignId);
-    const variableMap  = JSON.parse(campaign.variable_map);
-    const template     = db.prepare('SELECT * FROM templates WHERE id = ?').get(campaign.template_id);
-    const segment      = campaign.segment_id ? db.prepare('SELECT filters FROM segments WHERE id = ?').get(campaign.segment_id) : null;
-    const filters      = segment ? JSON.parse(segment.filters) : [];
-    const allowedTypes = campaign.allowed_line_types ? JSON.parse(campaign.allowed_line_types) : null;
+    const campaigns = await all(`
+      SELECT c.*,
+        l.name as list_name,
+        t.name as template_name, t.category as template_category, t.meta_status as template_meta_status,
+        s.name as segment_name,
+        i.name as instance_name, i.display_phone as instance_phone
+      FROM campaigns c
+      LEFT JOIN lists             l ON l.id = c.list_id
+      LEFT JOIN templates         t ON t.id = c.template_id
+      LEFT JOIN segments          s ON s.id = c.segment_id
+      LEFT JOIN whatsapp_instances i ON i.id = c.instance_id
+      WHERE c.tenant_id = $1 ORDER BY c.created_at DESC
+    `, [req.auth.tenantId]);
+    res.json(campaigns.map(c => ({ ...c, variable_map: JSON.parse(c.variable_map) })));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
-    // Load global opt-out list into a Set for O(1) lookup
-    const optedOutPhones = new Set(
-      db.prepare('SELECT phone FROM optouts').all().map(r => r.phone)
-    );
+router.get('/stats', async (req, res) => {
+  try {
+    const stats = await one(`
+      SELECT COUNT(*) as total_campaigns,
+        SUM(total)       as total_messages,
+        SUM(delivered)   as total_delivered,
+        SUM(read_count)  as total_read,
+        SUM(failed_count) as total_failed,
+        ROUND(SUM(total_cost)::numeric, 4) as total_cost
+      FROM campaigns WHERE tenant_id = $1
+    `, [req.auth.tenantId]);
+    res.json({
+      total_campaigns: parseInt(stats.total_campaigns) || 0,
+      total_messages:  parseInt(stats.total_messages)  || 0,
+      total_delivered: parseInt(stats.total_delivered) || 0,
+      total_read:      parseInt(stats.total_read)      || 0,
+      total_failed:    parseInt(stats.total_failed)    || 0,
+      total_cost:      parseFloat(stats.total_cost)    || 0,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
-    // Load lookup results for this list (for line-type filtering)
-    const lookupMap = {};
-    if (allowedTypes?.length) {
-      db.prepare('SELECT contact_id, line_type FROM lookup_results WHERE list_id = ?')
-        .all(campaign.list_id)
-        .forEach(r => { lookupMap[r.contact_id] = r.line_type; });
+router.get('/:id', async (req, res) => {
+  try {
+    const c = await one(`
+      SELECT c.*,
+        l.name as list_name, l.columns as list_columns, l.phone_column,
+        t.name as template_name, t.body as template_body, t.variables as template_variables,
+        t.category as template_category, t.language as template_language, t.meta_status,
+        t.header_type, t.header_content, t.footer, t.buttons as template_buttons,
+        i.name as instance_name, i.display_phone as instance_phone
+      FROM campaigns c
+      LEFT JOIN lists             l ON l.id = c.list_id
+      LEFT JOIN templates         t ON t.id = c.template_id
+      LEFT JOIN whatsapp_instances i ON i.id = c.instance_id
+      WHERE c.id = $1 AND c.tenant_id = $2
+    `, [req.params.id, req.auth.tenantId]);
+    if (!c) return res.status(404).json({ error: 'Campanha não encontrada' });
+    res.json({
+      ...c,
+      variable_map:       JSON.parse(c.variable_map),
+      list_columns:       c.list_columns       ? JSON.parse(c.list_columns)       : [],
+      template_variables: c.template_variables ? JSON.parse(c.template_variables) : [],
+      template_buttons:   c.template_buttons   ? JSON.parse(c.template_buttons)   : [],
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get('/:id/messages', async (req, res) => {
+  try {
+    const { limit = 50, offset = 0, status } = req.query;
+    const c = await one('SELECT id FROM campaigns WHERE id = $1 AND tenant_id = $2', [req.params.id, req.auth.tenantId]);
+    if (!c) return res.status(404).json({ error: 'Campanha não encontrada' });
+
+    let q = 'SELECT * FROM messages WHERE campaign_id = $1';
+    const params = [req.params.id];
+    let idx = 2;
+    if (status) { q += ` AND status = $${idx++}`; params.push(status); }
+    q += ` ORDER BY sent_at DESC LIMIT $${idx++} OFFSET $${idx++}`;
+    params.push(Number(limit), Number(offset));
+
+    const [messages, total] = await Promise.all([
+      all(q, params),
+      one('SELECT COUNT(*) as n FROM messages WHERE campaign_id = $1', [req.params.id]),
+    ]);
+    res.json({ messages, total: parseInt(total.n) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/* ─────────────────────────────────────────────────────────────────────────
+   ESTIMAR custo da campanha
+   ───────────────────────────────────────────────────────────────────────── */
+router.post('/estimate', async (req, res) => {
+  try {
+    const { template_id, list_id, segment_id } = req.body;
+
+    const template = await one('SELECT category FROM templates WHERE id = $1 AND tenant_id = $2', [template_id, req.auth.tenantId]);
+    if (!template) return res.status(404).json({ error: 'Template não encontrado' });
+
+    let count;
+    if (segment_id) {
+      const seg = await one('SELECT contact_count FROM segments WHERE id = $1 AND tenant_id = $2', [segment_id, req.auth.tenantId]);
+      count = seg?.contact_count || 0;
+    } else {
+      const list = await one('SELECT contact_count FROM lists WHERE id = $1 AND tenant_id = $2', [list_id, req.auth.tenantId]);
+      count = list?.contact_count || 0;
     }
 
-    // Fetch and apply segment filters
-    let contacts = db.prepare('SELECT * FROM list_contacts WHERE list_id = ?').all(campaign.list_id);
+    const estimate = await estimateCampaign(template.category, count);
+    const tenant   = await one('SELECT credit_balance FROM tenants WHERE id = $1', [req.auth.tenantId]);
+    const balance  = parseFloat(tenant.credit_balance);
+    res.json({ ...estimate, balance, sufficient: balance >= estimate.total_cost });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/* ─────────────────────────────────────────────────────────────────────────
+   CRIAR campanha
+   ───────────────────────────────────────────────────────────────────────── */
+router.post('/', async (req, res) => {
+  try {
+    const { name, list_id, segment_id, template_id, instance_id, variable_map, scheduled_at } = req.body;
+    if (!name || !list_id || !template_id || !instance_id || !variable_map)
+      return res.status(400).json({ error: 'Campos obrigatórios: name, list_id, template_id, instance_id, variable_map' });
+
+    const [list, template, instance] = await Promise.all([
+      one('SELECT * FROM lists WHERE id = $1 AND tenant_id = $2', [list_id, req.auth.tenantId]),
+      one('SELECT * FROM templates WHERE id = $1 AND tenant_id = $2', [template_id, req.auth.tenantId]),
+      one("SELECT id FROM whatsapp_instances WHERE id = $1 AND tenant_id = $2 AND status = 'active'", [instance_id, req.auth.tenantId]),
+    ]);
+
+    if (!list)     return res.status(404).json({ error: 'Lista não encontrada' });
+    if (!template) return res.status(404).json({ error: 'Template não encontrado' });
+    if (template.meta_status !== 'approved')
+      return res.status(422).json({ error: `Template não aprovado (status atual: "${template.meta_status}"). Apenas templates com status "approved" podem ser usados em campanhas.` });
+    if (!instance) return res.status(404).json({ error: 'Instância WhatsApp não encontrada ou inativa' });
+
+    let contactCount = list.contact_count;
+    if (segment_id) {
+      const seg = await one('SELECT contact_count FROM segments WHERE id = $1 AND tenant_id = $2', [segment_id, req.auth.tenantId]);
+      if (seg) contactCount = seg.contact_count;
+    }
+
+    const estimate = await estimateCampaign(template.category, contactCount);
+    const status   = scheduled_at ? 'scheduled' : 'draft';
+    const id       = randomUUID();
+
+    await run(
+      `INSERT INTO campaigns
+         (id, tenant_id, name, list_id, segment_id, template_id, instance_id, variable_map, status, scheduled_at, total, cost_estimate)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+      [id, req.auth.tenantId, name, list_id, segment_id || null, template_id, instance_id,
+       JSON.stringify(variable_map), status, scheduled_at || null, contactCount, estimate.total_cost]
+    );
+
+    writeLog(req.auth.tenantId, req.auth.sub, 'info', 'campaign', `Campanha criada: ${name}`, { campaignId: id });
+    const campaign = await one('SELECT * FROM campaigns WHERE id = $1', [id]);
+    res.status(201).json({ ...campaign, variable_map: JSON.parse(campaign.variable_map) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/* ─────────────────────────────────────────────────────────────────────────
+   ENVIAR campanha
+   ───────────────────────────────────────────────────────────────────────── */
+router.post('/:id/send', async (req, res) => {
+  try {
+    const campaign = await one('SELECT * FROM campaigns WHERE id = $1 AND tenant_id = $2', [req.params.id, req.auth.tenantId]);
+    if (!campaign) return res.status(404).json({ error: 'Campanha não encontrada' });
+    if (!['draft', 'scheduled'].includes(campaign.status))
+      return res.status(409).json({ error: `Status inválido: ${campaign.status}` });
+
+    const tenant = await one('SELECT credit_balance FROM tenants WHERE id = $1', [req.auth.tenantId]);
+    const balance = parseFloat(tenant.credit_balance);
+    const costEst = parseFloat(campaign.cost_estimate);
+    if (balance < costEst)
+      return res.status(402).json({ error: `Saldo insuficiente. Saldo: $${balance.toFixed(4)} | Estimado: $${costEst.toFixed(4)}` });
+
+    await run("UPDATE campaigns SET status = 'sending', started_at = NOW() WHERE id = $1", [campaign.id]);
+    writeLog(req.auth.tenantId, req.auth.sub, 'info', 'campaign', `Envio iniciado: ${campaign.name}`, { campaignId: campaign.id });
+    res.json({ ok: true });
+
+    process.nextTick(() => runCampaign(campaign.id, req.auth.tenantId));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.delete('/:id', async (req, res) => {
+  try {
+    const c = await one('SELECT id, status FROM campaigns WHERE id = $1 AND tenant_id = $2', [req.params.id, req.auth.tenantId]);
+    if (!c) return res.status(404).json({ error: 'Campanha não encontrada' });
+    if (c.status === 'sending') return res.status(409).json({ error: 'Não é possível excluir campanha em envio' });
+    await run('DELETE FROM messages WHERE campaign_id = $1', [req.params.id]);
+    await run('DELETE FROM campaigns WHERE id = $1', [req.params.id]);
+    res.status(204).send();
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/* ─────────────────────────────────────────────────────────────────────────
+   RUNNER da campanha (assíncrono, fire-and-forget)
+   ───────────────────────────────────────────────────────────────────────── */
+async function runCampaign(campaignId, tenantId) {
+  try {
+    const campaign    = await one('SELECT * FROM campaigns WHERE id = $1', [campaignId]);
+    const template    = await one('SELECT * FROM templates WHERE id = $1', [campaign.template_id]);
+    const variableMap = JSON.parse(campaign.variable_map);
+
+    const segment = campaign.segment_id
+      ? await one('SELECT filters FROM segments WHERE id = $1', [campaign.segment_id])
+      : null;
+    const filters = segment ? JSON.parse(segment.filters) : [];
+
+    // Opt-outs do tenant (e globais sem tenant)
+    const optOutRows = await all('SELECT phone FROM optouts WHERE tenant_id = $1 OR tenant_id IS NULL', [tenantId]);
+    const optedOut   = new Set(optOutRows.map(r => r.phone));
+
+    // Contatos da lista
+    let contacts = await all('SELECT * FROM list_contacts WHERE list_id = $1', [campaign.list_id]);
     if (filters.length) {
       contacts = contacts.filter(c => {
         const data = JSON.parse(c.data);
@@ -182,58 +257,95 @@ async function runCampaign(campaignId, tenantId) {
       });
     }
 
-    db.prepare('UPDATE campaigns SET total = ? WHERE id = ?').run(contacts.length, campaignId);
+    await run('UPDATE campaigns SET total = $1 WHERE id = $2', [contacts.length, campaignId]);
 
-    const ins = db.prepare('INSERT INTO messages (id, campaign_id, contact_id, phone, body, status) VALUES (?, ?, ?, ?, ?, ?)');
-    let sent = 0, failedCount = 0, optedOutCount = 0, skippedCount = 0;
+    let sent = 0, failedCount = 0, optedOutCount = 0;
+    const variables = JSON.parse(template.variables || '[]');
+    const buttons   = JSON.parse(template.buttons   || '[]');
 
     for (const contact of contacts) {
-      // Skip opted-out contacts
-      if (optedOutPhones.has(contact.phone)) {
-        ins.run(uuidv4(), campaignId, contact.id, contact.phone, '', 'opted_out');
+      if (optedOut.has(contact.phone)) {
+        await run(
+          "INSERT INTO messages (id, campaign_id, contact_id, phone, body, status, template_id, conversation_type) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+          [randomUUID(), campaignId, contact.id, contact.phone, '', 'opted_out', template.id, template.category.toLowerCase()]
+        );
         optedOutCount++;
-        db.prepare('UPDATE campaigns SET opted_out_count = ? WHERE id = ?').run(optedOutCount, campaignId);
+        await run('UPDATE campaigns SET opted_out_count = $1 WHERE id = $2', [optedOutCount, campaignId]);
         continue;
       }
 
-      // Skip by line type if filter is active
-      if (allowedTypes?.length) {
-        const lineType = lookupMap[contact.id] || null;
-        if (!lineType || !allowedTypes.includes(lineType)) {
-          ins.run(uuidv4(), campaignId, contact.id, contact.phone, '', 'skipped');
-          skippedCount++;
-          db.prepare('UPDATE campaigns SET skipped_count = ? WHERE id = ?').run(skippedCount, campaignId);
-          continue;
-        }
-      }
+      const contactData  = JSON.parse(contact.data);
+      const renderedBody = renderTemplate(template.body, variableMap, contactData);
+      const msgId        = randomUUID();
 
-      const contactData = JSON.parse(contact.data);
-      const body = renderTemplate(template.body, variableMap, contactData);
-      const msgId = uuidv4();
-      ins.run(msgId, campaignId, contact.id, contact.phone, body, 'queued');
+      await run(
+        "INSERT INTO messages (id, campaign_id, contact_id, phone, body, status, template_id, conversation_type) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+        [msgId, campaignId, contact.id, contact.phone, renderedBody, 'queued', template.id, template.category.toLowerCase()]
+      );
 
       try {
-        const result = await sendSMS(contact.phone, body, tenantId);
-        db.prepare("UPDATE messages SET status = ?, twilio_sid = ?, updated_at = datetime('now') WHERE id = ?").run(result.status, result.sid, msgId);
+        // Montar components para a API Meta
+        const components = [];
+
+        if (template.header_type && template.header_type !== 'none') {
+          if (template.header_type === 'text') {
+            const renderedHeader = renderTemplate(template.header_content || '', variableMap, contactData);
+            if (renderedHeader) components.push({ type: 'header', parameters: [{ type: 'text', text: renderedHeader }] });
+          } else {
+            components.push({ type: 'header', parameters: [{ type: template.header_type, [template.header_type]: { link: template.header_content } }] });
+          }
+        }
+
+        if (variables.length) {
+          const bodyParams = variables.map(v => {
+            const val = variableMap[v] ? renderTemplate(`{{${v}}}`, variableMap, contactData) : (contactData[v] || '');
+            return { type: 'text', text: val };
+          });
+          if (bodyParams.length) components.push({ type: 'body', parameters: bodyParams });
+        }
+
+        buttons.forEach((btn, idx) => {
+          if (btn.type === 'URL' && btn.url?.includes('{{')) {
+            const renderedUrl = renderTemplate(btn.url, variableMap, contactData);
+            components.push({ type: 'button', sub_type: 'url', index: String(idx), parameters: [{ type: 'text', text: renderedUrl.split('/').pop() }] });
+          }
+        });
+
+        const result = await sendTemplateMessage({
+          to:           contact.phone,
+          templateName: template.name,
+          language:     template.language,
+          components:   components.length ? components : undefined,
+          instanceId:   campaign.instance_id,
+          tenantId,
+        });
+
+        await run(
+          "UPDATE messages SET status = $1, meta_message_id = $2, updated_at = NOW() WHERE id = $3",
+          ['sent', result.meta_message_id, msgId]
+        );
         sent++;
       } catch (err) {
-        db.prepare("UPDATE messages SET status = 'failed', error_message = ?, updated_at = datetime('now') WHERE id = ?").run(err.message, msgId);
+        await run(
+          "UPDATE messages SET status = 'failed', error_message = $1, updated_at = NOW() WHERE id = $2",
+          [err.message, msgId]
+        );
         failedCount++;
       }
-      db.prepare('UPDATE campaigns SET sent = ?, failed_count = ? WHERE id = ?').run(sent, failedCount, campaignId);
-      await new Promise(r => setTimeout(r, 110));
+
+      await run('UPDATE campaigns SET sent = $1, failed_count = $2 WHERE id = $3', [sent, failedCount, campaignId]);
+      await new Promise(r => setTimeout(r, 200)); // respeitar rate limit Meta
     }
 
-    if (campaign.cost_estimate > 0) {
-      await deductCredits(tenantId, campaign.cost_estimate, `Campanha: ${campaign.name}`);
-    }
+    await deductCredits(tenantId, parseFloat(campaign.cost_estimate), `Campanha: ${campaign.name}`);
+    await run(
+      "UPDATE campaigns SET status = 'completed', completed_at = NOW(), opted_out_count = $1 WHERE id = $2",
+      [optedOutCount, campaignId]
+    );
 
-    db.prepare("UPDATE campaigns SET status = 'completed', completed_at = datetime('now'), opted_out_count = ?, skipped_count = ? WHERE id = ?")
-      .run(optedOutCount, skippedCount, campaignId);
-
-    writeLog(tenantId, null, 'info', 'campaign', `Campanha concluída: ${campaign.name}`, { sent, failed: failedCount, opted_out: optedOutCount, skipped: skippedCount });
+    writeLog(tenantId, null, 'info', 'campaign', `Campanha concluída: ${campaign.name}`, { sent, failed: failedCount, opted_out: optedOutCount });
   } catch (err) {
-    db.prepare("UPDATE campaigns SET status = 'failed' WHERE id = ?").run(campaignId);
+    await run("UPDATE campaigns SET status = 'failed' WHERE id = $1", [campaignId]).catch(() => {});
     writeLog(tenantId, null, 'error', 'campaign', `Erro na campanha ${campaignId}: ${err.message}`);
   }
 }

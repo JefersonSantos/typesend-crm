@@ -1,7 +1,7 @@
 {
-  "name": "maiver-backend",
-  "version": "2.0.0",
-  "description": "Maiver SMS Platform - Multitenant Backend",
+  "name": "typesend-crm-backend",
+  "version": "1.0.0",
+  "description": "Typesend CRM — WhatsApp Business Platform - Multitenant Backend",
   "main": "src/app.js",
   "scripts": {
     "start": "node --no-warnings src/app.js",
@@ -17,8 +17,8 @@
     "jsonwebtoken": "^9.0.2",
     "multer": "^2.1.1",
     "node-cron": "^3.0.3",
+    "pg": "^8.12.0",
     "stripe": "^16.4.0",
-    "twilio": "^5.3.3",
     "uuid": "^9.0.1"
   },
   "devDependencies": {

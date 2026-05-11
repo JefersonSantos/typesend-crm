@@ -1,29 +1,43 @@
-# Dependências
-node_modules/
-
-# Banco de dados local
-data/
-*.db
-*.db-shm
-*.db-wal
-
-# Variáveis de ambiente (NUNCA subir)
+# ── Credentials — NEVER commit ───────────────
 .env
 .env.local
 .env.production
 .env.*.local
 
-# Build do frontend
+# ── Dependencies ──────────────────────────────
+node_modules/
+**/node_modules/
+
+# ── Build output ──────────────────────────────
 frontend/dist/
 
-# Logs
-*.log
-npm-debug.log*
+# ── Local database / legacy data ──────────────
+data/
+*.db
+*.db-shm
+*.db-wal
+backend/data/
 
-# Sistema operacional
+# ── Logs ──────────────────────────────────────
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ── OS ────────────────────────────────────────
 .DS_Store
 Thumbs.db
+desktop.ini
 
-# Editor
+# ── IDE ───────────────────────────────────────
 .vscode/
 .idea/
+*.swp
+*.swo
+
+# ── Private keys & certificates ───────────────
+*.pem
+*.key
+*.p12
+*.pfx

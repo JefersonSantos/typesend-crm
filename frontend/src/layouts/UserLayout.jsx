@@ -11,7 +11,7 @@ export default function UserLayout({ children }) {
   return (
     <div className="layout">
       <aside className="sidebar">
-        <div className="sidebar-logo">SMS <span>CRM</span></div>
+        <div className="sidebar-logo">Zap<span style={{ color: '#25D366' }}>CRM</span></div>
         <nav>
           <NavLink to="/" end>🏠 Dashboard</NavLink>
           <NavLink to="/lists">📋 Listas</NavLink>

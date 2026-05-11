@@ -14,7 +14,7 @@ export default function AdminDashboard() {
       <div className="page">
         <div className="page-header">
           <h1 className="page-title">Dashboard Admin</h1>
-          <span style={{ fontSize: 13, color: '#9ca3af' }}>Maiver SMS Platform</span>
+          <span style={{ fontSize: 13, color: '#9ca3af' }}>Typesend CRM — WhatsApp Platform</span>
         </div>
 
         <div className="stat-grid">

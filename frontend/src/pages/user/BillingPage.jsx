@@ -27,9 +27,11 @@ const TYPE_COLOR = {
 };
 
 const RESOURCE_LABELS = {
-  sms_outbound: { label: '📤 SMS Enviado',  icon: '📤' },
-  sms_inbound:  { label: '📥 SMS Recebido', icon: '📥' },
-  api_call:     { label: '🔌 Chamada API',  icon: '🔌' },
+  whatsapp_marketing:      { label: 'Conversa Marketing',    icon: '📣' },
+  whatsapp_utility:        { label: 'Conversa Utilitária',   icon: '🔔' },
+  whatsapp_authentication: { label: 'Conversa Autenticação', icon: '🔐' },
+  whatsapp_service:        { label: 'Conversa de Serviço',   icon: '💬' },
+  api_call:                { label: 'Chamada de API',        icon: '⚙️' },
 };
 
 export default function BillingPage() {
@@ -123,7 +125,7 @@ export default function BillingPage() {
           <div className="card" style={{ marginBottom: 24 }}>
             <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 4 }}>📊 Tabela de Tarifas</h3>
             <p style={{ fontSize: 13, color: '#6b7280', marginBottom: 16 }}>
-              Tarifas por segmento de SMS (1 segmento = até 160 chars GSM-7 ou 70 chars Unicode).
+              Tarifas por conversa WhatsApp de 24h. A Meta cobra por janela de conversa, não por mensagem individual.
             </p>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12 }}>
               {rates.map(r => {
@@ -142,13 +144,13 @@ export default function BillingPage() {
                     <div style={{ fontSize: 24, fontWeight: 800, color: 'var(--primary)', fontFamily: 'monospace' }}>
                       ${Number(r.per_unit).toFixed(4)}
                     </div>
-                    <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 4 }}>por segmento</div>
+                    <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 4 }}>por conversa 24h</div>
                   </div>
                 );
               })}
             </div>
             <p style={{ fontSize: 11, color: '#9ca3af', marginTop: 12 }}>
-              * Tarifas em USD. Campanhas com múltiplos segmentos multiplicam o custo pelo número de segmentos.
+              * Tarifas em USD. Cada conversa de 24h é cobrada uma única vez por destinatário, independente do número de mensagens trocadas na janela.
             </p>
           </div>
         )}

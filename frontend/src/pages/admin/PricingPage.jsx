@@ -2,10 +2,12 @@ import { useState, useEffect } from 'react';
 import { admin as adminApi } from '../../services/api';
 import AdminLayout from '../../layouts/AdminLayout';
 
-const RESOURCE_LABELS = {
-  sms_outbound: 'SMS Enviado',
-  sms_inbound:  'SMS Recebido',
-  api_call:     'Chamada de API',
+const RESOURCE_INFO = {
+  whatsapp_marketing:      { label: 'Conversa Marketing',    icon: '📣', desc: 'Iniciada pela empresa — promoções e ofertas' },
+  whatsapp_utility:        { label: 'Conversa Utilitária',   icon: '🔔', desc: 'Iniciada pela empresa — transacional (confirmações, alertas)' },
+  whatsapp_authentication: { label: 'Conversa Autenticação', icon: '🔐', desc: 'OTP, verificação de conta' },
+  whatsapp_service:        { label: 'Conversa de Serviço',   icon: '💬', desc: 'Iniciada pelo cliente — atendimento (gratuita pela Meta em muitas regiões)' },
+  api_call:                { label: 'Chamada de API',        icon: '⚙️', desc: 'Custo de infraestrutura por chamada à API' },
 };
 
 export default function PricingPage() {
@@ -13,19 +15,12 @@ export default function PricingPage() {
   const [saving, setSaving]   = useState(false);
   const [saved, setSaved]     = useState(false);
 
-  function load() {
-    adminApi.pricing().then(r => setPricing(r.data));
-  }
-  useEffect(() => { load(); }, []);
+  useEffect(() => { adminApi.pricing().then(r => setPricing(r.data)); }, []);
 
-  function updateField(resource_type, field, value) {
-    setPricing(p =>
-      p.map(row =>
-        row.resource_type === resource_type
-          ? { ...row, [field]: parseFloat(value) || 0 }
-          : row
-      )
-    );
+  function upd(resource_type, field, value) {
+    setPricing(p => p.map(row =>
+      row.resource_type === resource_type ? { ...row, [field]: parseFloat(value) || 0 } : row
+    ));
   }
 
   async function handleSave() {
@@ -34,132 +29,87 @@ export default function PricingPage() {
       await adminApi.updatePricing(pricing);
       setSaved(true);
       setTimeout(() => setSaved(false), 3000);
-    } finally {
-      setSaving(false);
-    }
+    } finally { setSaving(false); }
   }
 
   return (
     <AdminLayout>
-      <div className="page">
-        <div className="page-header">
-          <h1 className="page-title">Tabela de Preços</h1>
-          <button className="btn btn-primary" onClick={handleSave} disabled={saving}>
-            {saving ? 'Salvando...' : saved ? '✓ Salvo' : 'Salvar preços'}
+      <div style={{ padding: 24 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
+          <div>
+            <h1 style={{ fontSize: 22, fontWeight: 700, color: '#f9fafb', margin: 0 }}>Tabela de Preços</h1>
+            <p style={{ color: '#9ca3af', fontSize: 14, marginTop: 4 }}>Configure o custo base Meta e o markup cobrado do usuário por tipo de conversa WhatsApp</p>
+          </div>
+          <button onClick={handleSave} disabled={saving} style={{ background: saved ? '#16a34a' : '#25D366', color: '#fff', border: 'none', borderRadius: 8, padding: '10px 20px', fontWeight: 600, fontSize: 14, cursor: 'pointer' }}>
+            {saving ? 'Salvando...' : saved ? '✓ Salvo!' : 'Salvar preços'}
           </button>
         </div>
 
-        <div className="card">
-          <p style={{ fontSize: 13, color: '#6b7280', marginBottom: 20 }}>
-            Configure o custo base do Twilio e o markup cobrado do usuário. O usuário paga:{' '}
-            <strong>Twilio base + Markup</strong>.
+        {/* Nota explicativa */}
+        <div style={{ background: '#0f172a', border: '1px solid #1e3a5f', borderRadius: 12, padding: '14px 18px', marginBottom: 24 }}>
+          <p style={{ color: '#93c5fd', fontSize: 14, margin: 0 }}>
+            <b>💡 Como funciona:</b> A Meta cobra por conversa de 24 horas (não por mensagem). O usuário paga:{' '}
+            <b>Custo Meta + Markup</b>. Os preços variam por país — configure conforme a região principal dos seus clientes.
           </p>
-
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-              <thead>
-                <tr>
-                  {['Recurso', 'Descrição', 'Custo Twilio (USD)', 'Markup (USD)', 'Total p/ usuário'].map(h => (
-                    <th key={h} style={{
-                      textAlign: h === 'Recurso' || h === 'Descrição' ? 'left' : 'right',
-                      padding: '8px 14px',
-                      background: 'var(--gray-50)',
-                      borderBottom: '1px solid var(--gray-200)',
-                      fontSize: 12,
-                      fontWeight: 600,
-                      color: '#374151',
-                    }}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {pricing.map(row => {
-                  const base   = row.twilio_base_cost ?? 0;
-                  const markup = row.markup           ?? 0;
-                  const total  = base + markup;
-                  return (
-                    <tr key={row.resource_type}>
-                      <td style={{ padding: '14px', borderBottom: '1px solid var(--gray-100)' }}>
-                        <code style={{ background: 'var(--gray-100)', padding: '2px 8px', borderRadius: 4, fontSize: 12 }}>
-                          {row.resource_type}
-                        </code>
-                      </td>
-                      <td style={{ padding: '14px', borderBottom: '1px solid var(--gray-100)', color: '#6b7280', fontSize: 13 }}>
-                        {row.description}
-                      </td>
-
-                      {/* Twilio base cost — now editable */}
-                      <td style={{ padding: '14px', borderBottom: '1px solid var(--gray-100)', textAlign: 'right' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 4 }}>
-                          <span style={{ color: '#9ca3af', fontSize: 13 }}>$</span>
-                          <input
-                            type="number"
-                            step="0.0001"
-                            min="0"
-                            value={base}
-                            onChange={e => updateField(row.resource_type, 'twilio_base_cost', e.target.value)}
-                            style={{
-                              width: 90,
-                              padding: '4px 8px',
-                              border: '1px solid var(--gray-200)',
-                              borderRadius: 6,
-                              fontFamily: 'monospace',
-                              fontSize: 13,
-                              textAlign: 'right',
-                              background: '#fefce8',
-                            }}
-                          />
-                        </div>
-                      </td>
-
-                      {/* Markup */}
-                      <td style={{ padding: '14px', borderBottom: '1px solid var(--gray-100)', textAlign: 'right' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 4 }}>
-                          <span style={{ color: '#9ca3af', fontSize: 13 }}>$</span>
-                          <input
-                            type="number"
-                            step="0.0001"
-                            min="0"
-                            value={markup}
-                            onChange={e => updateField(row.resource_type, 'markup', e.target.value)}
-                            style={{
-                              width: 90,
-                              padding: '4px 8px',
-                              border: '1px solid var(--gray-200)',
-                              borderRadius: 6,
-                              fontFamily: 'monospace',
-                              fontSize: 13,
-                              textAlign: 'right',
-                            }}
-                          />
-                        </div>
-                      </td>
-
-                      {/* Total */}
-                      <td style={{
-                        padding: '14px',
-                        borderBottom: '1px solid var(--gray-100)',
-                        textAlign: 'right',
-                        fontFamily: 'monospace',
-                        fontSize: 15,
-                        fontWeight: 700,
-                        color: 'var(--primary)',
-                      }}>
-                        ${total.toFixed(4)}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
         </div>
 
-        <div className="card" style={{ background: '#fefce8', border: '1px solid #fde047' }}>
-          <p style={{ fontSize: 13, color: '#854d0e' }}>
-            <strong>💡 Dica:</strong> O campo "Custo Twilio" deve refletir o valor cobrado pelo Twilio na sua conta.
-            O "Markup" é sua margem. Por exemplo: Twilio $0.0079 + Markup $0.005 = usuário paga $0.0129/SMS.
-            Para 1.000 mensagens de 160 chars = <strong>$12,90</strong>.
+        {/* Tabela */}
+        <div style={{ background: '#111827', border: '1px solid #1f2937', borderRadius: 12, overflow: 'hidden' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead>
+              <tr style={{ background: '#1f2937' }}>
+                {['Tipo de Conversa', 'Descrição', 'Custo Meta (USD)', 'Markup (USD)', 'Total p/ usuário'].map((h, i) => (
+                  <th key={h} style={{ textAlign: i >= 2 ? 'right' : 'left', padding: '12px 16px', fontSize: 12, fontWeight: 600, color: '#9ca3af', borderBottom: '1px solid #374151' }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {pricing.map(row => {
+                const info   = RESOURCE_INFO[row.resource_type] || { label: row.resource_type, icon: '💰', desc: row.description };
+                const base   = row.meta_base_cost ?? 0;
+                const markup = row.markup ?? 0;
+                const total  = base + markup;
+                return (
+                  <tr key={row.resource_type} style={{ borderBottom: '1px solid #1f2937' }}>
+                    <td style={{ padding: '14px 16px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <span style={{ fontSize: 18 }}>{info.icon}</span>
+                        <span style={{ fontWeight: 600, color: '#f9fafb', fontSize: 14 }}>{info.label}</span>
+                      </div>
+                    </td>
+                    <td style={{ padding: '14px 16px', color: '#6b7280', fontSize: 13 }}>{info.desc}</td>
+                    <td style={{ padding: '14px 16px', textAlign: 'right' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 4 }}>
+                        <span style={{ color: '#6b7280', fontSize: 13 }}>$</span>
+                        <input type="number" step="0.0001" min="0" value={base}
+                          onChange={e => upd(row.resource_type, 'meta_base_cost', e.target.value)}
+                          style={{ width: 90, padding: '4px 8px', border: '1px solid #374151', borderRadius: 6, fontFamily: 'monospace', fontSize: 13, textAlign: 'right', background: '#1a2744', color: '#93c5fd' }} />
+                      </div>
+                    </td>
+                    <td style={{ padding: '14px 16px', textAlign: 'right' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 4 }}>
+                        <span style={{ color: '#6b7280', fontSize: 13 }}>$</span>
+                        <input type="number" step="0.0001" min="0" value={markup}
+                          onChange={e => upd(row.resource_type, 'markup', e.target.value)}
+                          style={{ width: 90, padding: '4px 8px', border: '1px solid #374151', borderRadius: 6, fontFamily: 'monospace', fontSize: 13, textAlign: 'right', background: '#1a2937', color: '#f9fafb' }} />
+                      </div>
+                    </td>
+                    <td style={{ padding: '14px 16px', textAlign: 'right', fontFamily: 'monospace', fontSize: 15, fontWeight: 700, color: '#25D366' }}>
+                      ${total.toFixed(4)}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+
+        {/* Tabela de referência Meta BR */}
+        <div style={{ marginTop: 20, background: '#0f172a', border: '1px solid #1e3a5f', borderRadius: 12, padding: '14px 18px' }}>
+          <p style={{ color: '#9ca3af', fontSize: 13, margin: 0 }}>
+            <b style={{ color: '#d1d5db' }}>Referência Meta Brasil (preços aproximados):</b>{' '}
+            Marketing ~$0.0625 · Utilitária ~$0.0080 · Autenticação ~$0.0315 · Serviço $0.00 (gratuita para usuário)
+            — <a href="https://developers.facebook.com/docs/whatsapp/pricing" target="_blank" rel="noreferrer" style={{ color: '#60a5fa' }}>Ver tabela oficial Meta</a>
           </p>
         </div>
       </div>

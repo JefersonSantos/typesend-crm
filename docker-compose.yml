@@ -1,0 +1,64 @@
+services:
+
+  # ── PostgreSQL ──────────────────────────────────────────────────────────────
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB:       ${POSTGRES_DB:-typesend}
+      POSTGRES_USER:     ${POSTGRES_USER:-typesend}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - typesend_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-typesend} -d ${POSTGRES_DB:-typesend}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    # porta NOT exposed externally — accessible only inside typesend_net
+
+  # ── Backend (Node.js / Express) ─────────────────────────────────────────────
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL:  postgresql://${POSTGRES_USER:-typesend}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-typesend}
+      JWT_SECRET:    ${JWT_SECRET}
+      PORT:          3001
+      NODE_ENV:      production
+      ADMIN_EMAIL:   ${ADMIN_EMAIL}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD}
+      FRONTEND_URL:  ${FRONTEND_URL:-http://localhost}
+    volumes:
+      - backend_data:/app/data
+    networks:
+      - typesend_net
+    # porta NOT exposed externally — proxied by frontend nginx
+
+  # ── Frontend (React + Nginx) ─────────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_URL: /api
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "${APP_PORT:-80}:80"
+    networks:
+      - typesend_net
+
+volumes:
+  postgres_data:
+  backend_data:
+
+networks:
+  typesend_net:
+    driver: bridge

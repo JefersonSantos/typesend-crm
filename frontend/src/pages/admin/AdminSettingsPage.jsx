@@ -5,14 +5,15 @@ import AdminLayout from '../../layouts/AdminLayout';
 /* Keys grouped into sections */
 const SECTIONS = [
   {
-    title: '🔗 Twilio Global',
-    description: 'Credenciais padrão utilizadas quando o tenant não tem subconta configurada.',
+    title: '📱 Meta WhatsApp Business API',
+    description: 'Credenciais globais da Meta. Cada instância também pode ter seu próprio access token configurado na aba Instâncias.',
     keys: [
-      { key: 'twilio_account_sid',           label: 'Account SID',          type: 'text',     mono: true },
-      { key: 'twilio_auth_token',            label: 'Auth Token',           type: 'password', mono: true, sensitive: true },
-      { key: 'twilio_messaging_service_sid', label: 'Messaging Service SID',type: 'text',     mono: true },
-      { key: 'webhook_base_url',             label: 'Webhook Base URL',     type: 'url' },
-      { key: 'webhook_validate_signature',   label: 'Validar assinatura Twilio nos webhooks', type: 'toggle' },
+      { key: 'meta_app_id',              label: 'Meta App ID',                          type: 'text',     mono: true },
+      { key: 'meta_app_secret',          label: 'Meta App Secret',                      type: 'password', mono: true, sensitive: true },
+      { key: 'meta_global_access_token', label: 'System User Access Token global',      type: 'password', mono: true, sensitive: true },
+      { key: 'meta_webhook_verify_token',label: 'Webhook Verify Token global',          type: 'text',     mono: true },
+      { key: 'meta_api_version',         label: 'Versão da API (ex: v22.0)',            type: 'text',     mono: true },
+      { key: 'webhook_base_url',         label: 'URL base pública (ex: https://api.meuapp.com)', type: 'url' },
     ],
   },
   {

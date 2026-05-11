@@ -42,10 +42,10 @@ export default function LoginPage() {
       <div style={{ width: '100%', maxWidth: 400, padding: '0 16px' }}>
         <div style={{ textAlign: 'center', marginBottom: 32 }}>
           <h1 style={{ fontSize: 28, fontWeight: 800, color: 'var(--gray-900)' }}>
-            SMS <span style={{ color: 'var(--primary)' }}>CRM</span>
+            Typesend<span style={{ color: '#25D366' }}> CRM</span>
           </h1>
           <p style={{ color: 'var(--gray-600)', marginTop: 4, fontSize: 14 }}>
-            {isAdmin ? 'Painel Administrativo' : 'Plataforma de SMS Marketing'}
+            {isAdmin ? 'Painel Administrativo' : 'Plataforma WhatsApp Business'}
           </p>
         </div>
 

@@ -80,134 +80,49 @@ function CreditsModal({ tenant, onClose, onSaved }) {
   );
 }
 
-/* ── Twilio + AI Config Modal ────────────────────────────────────────────── */
-function TwilioModal({ tenant, onClose, onSaved }) {
-  const [form, setForm] = useState({
-    twilio_account_sid:           tenant.twilio_account_sid  || '',
-    twilio_auth_token:            '',   // never pre-fill masked token
-    twilio_messaging_service_sid: tenant.twilio_messaging_service_sid || '',
-    webhook_url:                  tenant.webhook_url || '',
-    anthropic_api_key:            '',   // never pre-fill
-  });
+/* ── AI Config Modal ─────────────────────────────────────────────────────── */
+function AIModal({ tenant, onClose, onSaved }) {
+  const [apiKey, setApiKey] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError]   = useState('');
-  const [cleared, setCleared] = useState(false);
-  const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
-
-  const hasCustomTwilio = !!(tenant.twilio_account_sid);
 
   async function handleSave(e) {
-    e.preventDefault();
-    setSaving(true); setError('');
-    // Only send non-empty fields so we don't accidentally clear things
-    const payload = {};
-    if (form.twilio_account_sid.trim())           payload.twilio_account_sid           = form.twilio_account_sid.trim();
-    if (form.twilio_auth_token.trim())            payload.twilio_auth_token            = form.twilio_auth_token.trim();
-    if (form.twilio_messaging_service_sid.trim()) payload.twilio_messaging_service_sid = form.twilio_messaging_service_sid.trim();
-    if (form.webhook_url.trim())                  payload.webhook_url                  = form.webhook_url.trim();
-    if (form.anthropic_api_key.trim())            payload.anthropic_api_key            = form.anthropic_api_key.trim();
-
+    e.preventDefault(); setSaving(true); setError('');
     try {
-      await adminApi.updateTenantTwilio(tenant.id, payload);
+      await adminApi.updateTenantAI(tenant.id, { anthropic_api_key: apiKey.trim() || null });
       onSaved();
     } catch (err) {
       setError(err.response?.data?.error || 'Erro ao salvar');
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function handleClear() {
-    if (!confirm(`Remover configuração Twilio de "${tenant.name}"? Voltará a usar as credenciais globais.`)) return;
-    setSaving(true);
-    try { await adminApi.clearTenantTwilio(tenant.id); setCleared(true); onSaved(); }
-    catch (err) { setError(err.response?.data?.error || 'Erro'); }
-    finally { setSaving(false); }
+    } finally { setSaving(false); }
   }
 
   return (
     <div className="modal-backdrop" onClick={e => e.target === e.currentTarget && onClose()}>
-      <div className="modal" style={{ maxWidth: 540 }}>
-        <h2 className="modal-title">Configuração Twilio — {tenant.name}</h2>
-
-        {hasCustomTwilio && (
-          <div style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 8, padding: '10px 14px', marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ fontSize: 13, color: '#166534' }}>✓ Subconta Twilio configurada</span>
-            <button type="button" className="btn btn-danger" style={{ fontSize: 12, padding: '4px 10px' }} onClick={handleClear} disabled={saving}>
-              Remover (usar global)
-            </button>
+      <div className="modal" style={{ maxWidth: 440 }}>
+        <h2 className="modal-title">🤖 IA — {tenant.name}</h2>
+        <p style={{ fontSize: 13, color: '#6b7280', marginBottom: 16 }}>
+          Chave Anthropic exclusiva para este tenant. Deixe vazio para usar a chave global.
+        </p>
+        {tenant.anthropic_api_key && (
+          <div style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 8, padding: '10px 14px', marginBottom: 16 }}>
+            <span style={{ fontSize: 13, color: '#166534' }}>✓ Chave própria configurada</span>
           </div>
         )}
-
-        {!hasCustomTwilio && (
-          <div style={{ background: '#fefce8', border: '1px solid #fde047', borderRadius: 8, padding: '10px 14px', marginBottom: 16 }}>
-            <span style={{ fontSize: 13, color: '#854d0e' }}>⚠ Usando credenciais globais. Preencha abaixo para atribuir uma subconta dedicada.</span>
-          </div>
-        )}
-
         {error && <div className="alert alert-error">{error}</div>}
-
         <form onSubmit={handleSave}>
           <div className="form-group">
-            <label>Account SID</label>
-            <input
-              value={form.twilio_account_sid}
-              onChange={e => set('twilio_account_sid', e.target.value)}
-              placeholder="AC..."
-              style={{ fontFamily: 'monospace', fontSize: 13 }}
-            />
-          </div>
-          <div className="form-group">
-            <label>Auth Token {hasCustomTwilio && <span style={{ color: '#9ca3af', fontWeight: 400 }}>(deixe em branco para manter o atual)</span>}</label>
+            <label>Anthropic API Key {tenant.anthropic_api_key && <span style={{ color: '#9ca3af', fontWeight: 400 }}>(deixe vazio para remover)</span>}</label>
             <input
               type="password"
-              value={form.twilio_auth_token}
-              onChange={e => set('twilio_auth_token', e.target.value)}
-              placeholder={hasCustomTwilio ? '••••••••' : 'Cole o Auth Token'}
+              value={apiKey}
+              onChange={e => setApiKey(e.target.value)}
+              placeholder={tenant.anthropic_api_key ? '••••••••' : 'sk-ant-...'}
               style={{ fontFamily: 'monospace', fontSize: 13 }}
             />
           </div>
-          <div className="form-group">
-            <label>Messaging Service SID</label>
-            <input
-              value={form.twilio_messaging_service_sid}
-              onChange={e => set('twilio_messaging_service_sid', e.target.value)}
-              placeholder="MG..."
-              style={{ fontFamily: 'monospace', fontSize: 13 }}
-            />
-          </div>
-          <div className="form-group">
-            <label>Webhook URL base <span style={{ color: '#9ca3af', fontWeight: 400 }}>(ex: https://minha-api.com)</span></label>
-            <input
-              type="url"
-              value={form.webhook_url}
-              onChange={e => set('webhook_url', e.target.value)}
-              placeholder="https://..."
-            />
-          </div>
-
-          <div style={{ borderTop: '1px solid var(--gray-200)', marginTop: 20, paddingTop: 16 }}>
-            <p style={{ fontSize: 13, fontWeight: 600, color: '#374151', marginBottom: 12 }}>🤖 Inteligência Artificial</p>
-            <div className="form-group">
-              <label>
-                Anthropic API Key {tenant.anthropic_api_key && <span style={{ color: '#16a34a', fontWeight: 400 }}>✓ Configurada</span>}
-                {!tenant.anthropic_api_key && <span style={{ color: '#9ca3af', fontWeight: 400 }}>(deixe vazio para usar a chave global)</span>}
-              </label>
-              <input
-                type="password"
-                value={form.anthropic_api_key}
-                onChange={e => set('anthropic_api_key', e.target.value)}
-                placeholder={tenant.anthropic_api_key ? '••••••••' : 'sk-ant-...'}
-                style={{ fontFamily: 'monospace', fontSize: 13 }}
-              />
-            </div>
-          </div>
-
           <div className="modal-footer">
             <button type="button" className="btn btn-ghost" onClick={onClose}>Cancelar</button>
-            <button type="submit" className="btn btn-primary" disabled={saving}>
-              {saving ? 'Salvando...' : 'Salvar configuração'}
-            </button>
+            <button type="submit" className="btn btn-primary" disabled={saving}>{saving ? 'Salvando...' : 'Salvar'}</button>
           </div>
         </form>
       </div>
@@ -223,7 +138,7 @@ export default function TenantsPage() {
   const [search, setSearch]         = useState('');
   const [showNew, setShowNew]       = useState(false);
   const [creditModal, setCreditModal] = useState(null);
-  const [twilioModal, setTwilioModal] = useState(null);
+  const [aiModal, setAiModal]         = useState(null);
   const [loading, setLoading]       = useState(true);
 
   function load() {
@@ -255,14 +170,14 @@ export default function TenantsPage() {
               <thead>
                 <tr>
                   <th>Empresa</th><th>Email</th><th>Status</th>
-                  <th>Saldo</th><th>Twilio</th><th>Plano</th><th>Criada em</th><th></th>
+                  <th>Saldo</th><th>Instâncias</th><th>IA</th><th>Plano</th><th>Criada em</th><th></th>
                 </tr>
               </thead>
               <tbody>
                 {loading
-                  ? <tr><td colSpan={8} style={{ textAlign: 'center', padding: 32, color: '#9ca3af' }}>Carregando...</td></tr>
+                  ? <tr><td colSpan={9} style={{ textAlign: 'center', padding: 32, color: '#9ca3af' }}>Carregando...</td></tr>
                   : tenants.length === 0
-                  ? <tr><td colSpan={8}><div className="empty"><div style={{ fontSize: 32 }}>🏢</div><p>Nenhuma conta</p></div></td></tr>
+                  ? <tr><td colSpan={9}><div className="empty"><div style={{ fontSize: 32 }}>🏢</div><p>Nenhuma conta</p></div></td></tr>
                   : tenants.map(t => (
                     <tr key={t.id}>
                       <td style={{ fontWeight: 500 }}>{t.name}</td>
@@ -271,10 +186,16 @@ export default function TenantsPage() {
                       <td style={{ fontFamily: 'monospace', fontSize: 13, fontWeight: 600, color: t.credit_balance > 0 ? '#16a34a' : '#ef4444' }}>
                         ${Number(t.credit_balance).toFixed(4)}
                       </td>
-                      <td>
-                        {t.twilio_account_sid
-                          ? <span style={{ fontSize: 11, background: '#dcfce7', color: '#166534', padding: '2px 7px', borderRadius: 999 }}>Subconta</span>
-                          : <span style={{ fontSize: 11, color: '#9ca3af' }}>Global</span>
+                      <td style={{ textAlign: 'center' }}>
+                        {t.instance_count > 0
+                          ? <span style={{ fontSize: 12, background: '#dcfce7', color: '#166534', padding: '2px 8px', borderRadius: 999, fontWeight: 600 }}>{t.instance_count}</span>
+                          : <span style={{ fontSize: 12, color: '#9ca3af' }}>—</span>
+                        }
+                      </td>
+                      <td style={{ textAlign: 'center' }}>
+                        {t.anthropic_api_key
+                          ? <span style={{ fontSize: 12, color: '#7c3aed' }}>Própria</span>
+                          : <span style={{ fontSize: 12, color: '#9ca3af' }}>Global</span>
                         }
                       </td>
                       <td style={{ fontSize: 12 }}>{t.plan}</td>
@@ -282,7 +203,7 @@ export default function TenantsPage() {
                       <td>
                         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                           <button className="btn btn-ghost" style={{ fontSize: 12, padding: '4px 10px' }} onClick={() => setCreditModal(t)}>💰 Créditos</button>
-                          <button className="btn btn-ghost" style={{ fontSize: 12, padding: '4px 10px' }} onClick={() => setTwilioModal(t)}>⚙ Twilio</button>
+                          <button className="btn btn-ghost" style={{ fontSize: 12, padding: '4px 10px' }} onClick={() => setAiModal(t)}>🤖 IA</button>
                           <button
                             className={`btn ${t.status === 'active' ? 'btn-danger' : 'btn-primary'}`}
                             style={{ fontSize: 12, padding: '4px 10px' }}
@@ -302,7 +223,7 @@ export default function TenantsPage() {
 
         {showNew      && <TenantModal onClose={() => setShowNew(false)}       onSaved={() => { setShowNew(false);       load(); }} />}
         {creditModal  && <CreditsModal tenant={creditModal}  onClose={() => setCreditModal(null)}  onSaved={() => { setCreditModal(null);  load(); }} />}
-        {twilioModal  && <TwilioModal  tenant={twilioModal}  onClose={() => setTwilioModal(null)}  onSaved={() => { setTwilioModal(null);  load(); }} />}
+        {aiModal      && <AIModal      tenant={aiModal}      onClose={() => setAiModal(null)}       onSaved={() => { setAiModal(null);       load(); }} />}
       </div>
     </AdminLayout>
   );
