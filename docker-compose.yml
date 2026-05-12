@@ -45,25 +45,13 @@ services:
       - backend_data:/app/data
     networks:
       - typesend_net
-
-  # ── Frontend (React + Nginx) ─────────────────────────────────────────────────
-  frontend:
-    build:
-      context: ./frontend
-      args:
-        VITE_API_URL: /api
-    restart: unless-stopped
-    depends_on:
-      - backend
-    networks:
-      - typesend_net
       - redeInterna
     labels:
       - traefik.enable=true
-      - traefik.http.routers.typesend-crm.rule=Host(`crm.typesend.com.br`)
-      - traefik.http.routers.typesend-crm.entrypoints=websecure
-      - traefik.http.routers.typesend-crm.tls.certresolver=letsencryptresolver
-      - traefik.http.services.typesend-crm.loadbalancer.server.port=80
+      - traefik.http.routers.typesend-api.rule=Host(`api.typesend.com.br`)
+      - traefik.http.routers.typesend-api.entrypoints=websecure
+      - traefik.http.routers.typesend-api.tls.certresolver=letsencryptresolver
+      - traefik.http.services.typesend-api.loadbalancer.server.port=3001
 
 volumes:
   postgres_data:

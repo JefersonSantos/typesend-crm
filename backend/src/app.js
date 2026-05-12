@@ -28,7 +28,22 @@ app.use('/api/billing/stripe-webhook', express.raw({ type: 'application/json' })
 // Raw body para Meta webhook
 app.use('/api/webhooks/meta', express.json());
 
-app.use(cors({ origin: process.env.FRONTEND_URL || 'http://localhost:5173' }));
+const allowedOrigins = [
+  process.env.FRONTEND_URL || 'http://localhost:5173',
+  'http://localhost:5173',
+  'http://localhost:4173',
+];
+app.use(cors({
+  origin: (origin, cb) => {
+    // Permite requisições sem origin (Postman, curl, webhooks) e origens permitidas
+    if (!origin || allowedOrigins.includes(origin) ||
+        (origin && origin.endsWith('.vercel.app'))) {
+      return cb(null, true);
+    }
+    cb(new Error(`CORS bloqueado para: ${origin}`));
+  },
+  credentials: true,
+}));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
