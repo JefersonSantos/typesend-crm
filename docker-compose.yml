@@ -3,7 +3,6 @@ services:
   # ── PostgreSQL ──────────────────────────────────────────────────────────────
   db:
     image: postgres:16-alpine
-    restart: unless-stopped
     environment:
       POSTGRES_DB:       ${POSTGRES_DB:-typesend}
       POSTGRES_USER:     ${POSTGRES_USER:-typesend}
@@ -17,23 +16,25 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 10s
+      start_period: 30s
+    deploy:
+      restart_policy:
+        condition: any
+        delay: 5s
 
   # ── Backend (Node.js / Express) ─────────────────────────────────────────────
   backend:
-    build: ./backend
-    restart: unless-stopped
+    image: ghcr.io/jefersonsantos/typesend-crm-backend:latest
     depends_on:
-      db:
-        condition: service_healthy
+      - db
     environment:
-      DATABASE_URL:   postgresql://${POSTGRES_USER:-typesend}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-typesend}
-      JWT_SECRET:     ${JWT_SECRET}
-      PORT:           3001
-      NODE_ENV:       production
-      ADMIN_EMAIL:    ${ADMIN_EMAIL}
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD}
-      FRONTEND_URL:   ${FRONTEND_URL:-https://crm.typesend.com.br}
+      DATABASE_URL:               postgresql://${POSTGRES_USER:-typesend}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-typesend}
+      JWT_SECRET:                 ${JWT_SECRET}
+      PORT:                       3001
+      NODE_ENV:                   production
+      ADMIN_EMAIL:                ${ADMIN_EMAIL}
+      ADMIN_PASSWORD:             ${ADMIN_PASSWORD}
+      FRONTEND_URL:               ${FRONTEND_URL:-https://crm.typesend.com.br}
       META_APP_ID:                ${META_APP_ID}
       META_APP_SECRET:            ${META_APP_SECRET}
       META_GLOBAL_ACCESS_TOKEN:   ${META_GLOBAL_ACCESS_TOKEN}
@@ -46,12 +47,16 @@ services:
     networks:
       - typesend_net
       - redeInterna
-    labels:
-      - traefik.enable=true
-      - traefik.http.routers.typesend-api.rule=Host(`api2.typesend.com.br`)
-      - traefik.http.routers.typesend-api.entrypoints=websecure
-      - traefik.http.routers.typesend-api.tls.certresolver=letsencryptresolver
-      - traefik.http.services.typesend-api.loadbalancer.server.port=3001
+    deploy:
+      restart_policy:
+        condition: any
+        delay: 10s
+      labels:
+        - traefik.enable=true
+        - traefik.http.routers.typesend-api2.rule=Host(`api2.typesend.com.br`)
+        - traefik.http.routers.typesend-api2.entrypoints=websecure
+        - traefik.http.routers.typesend-api2.tls.certresolver=letsencryptresolver
+        - traefik.http.services.typesend-api2.loadbalancer.server.port=3001
 
 volumes:
   postgres_data:
@@ -59,7 +64,7 @@ volumes:
 
 networks:
   typesend_net:
-    driver: bridge
+    driver: overlay
   redeInterna:
     external: true
     name: redeInterna
