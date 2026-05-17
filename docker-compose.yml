@@ -48,7 +48,7 @@ services:
       - redeInterna
     labels:
       - traefik.enable=true
-      - traefik.http.routers.typesend-api.rule=Host(`api.typesend.com.br`)
+      - traefik.http.routers.typesend-api.rule=Host(`api2.typesend.com.br`)
       - traefik.http.routers.typesend-api.entrypoints=websecure
       - traefik.http.routers.typesend-api.tls.certresolver=letsencryptresolver
       - traefik.http.services.typesend-api.loadbalancer.server.port=3001
