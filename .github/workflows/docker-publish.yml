@@ -7,8 +7,8 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_BACKEND:  ghcr.io/${{ github.repository_owner }}/typesend-crm-backend
-  IMAGE_FRONTEND: ghcr.io/${{ github.repository_owner }}/typesend-crm-frontend
+  IMAGE_BACKEND:  ghcr.io/jefersonsantos/typesend-crm-backend
+  IMAGE_FRONTEND: ghcr.io/jefersonsantos/typesend-crm-frontend
 
 jobs:
   build-and-push:
