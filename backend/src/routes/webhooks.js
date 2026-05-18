@@ -30,7 +30,7 @@ router.get('/meta', async (req, res) => {
 
     const [instance, globalToken] = await Promise.all([
       one('SELECT id FROM whatsapp_instances WHERE webhook_verify_token = $1', [token]),
-      getSetting('meta_webhook_verify_token'),
+      getSetting('meta_webhook_verify_token', 'META_WEBHOOK_VERIFY_TOKEN'),
     ]);
 
     if (instance || (globalToken && token === globalToken)) {
