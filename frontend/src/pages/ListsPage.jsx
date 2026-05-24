@@ -3,158 +3,6 @@ import { lists as api } from '../services/api';
 import UserLayout from '../layouts/UserLayout';
 /* eslint-disable no-unused-vars */
 
-const LINE_TYPE_LABELS = {
-  mobile:   { label: '📱 Móvel',     color: '#16a34a' },
-  landline: { label: '☎ Fixo',       color: '#6b7280' },
-  voip:     { label: '💻 VoIP',      color: '#3b82f6' },
-  unknown:  { label: '❓ Desconhecido',color: '#9ca3af' },
-  null:     { label: '—',            color: '#d1d5db' },
-};
-
-// ── Lookup Modal ─────────────────────────────────────────────────────────────
-function LookupModal({ list, onClose }) {
-  const [estimate, setEstimate] = useState(null);
-  const [running, setRunning]   = useState(false);
-  const [progress, setProgress] = useState(null); // { done, total }
-  const [results, setResults]   = useState([]);
-  const [summary, setSummary]   = useState([]);
-  const [error, setError]       = useState('');
-  const [done, setDone]         = useState(false);
-
-  useEffect(() => {
-    api.lookupEstimate(list.id)
-      .then(r => setEstimate(r.data))
-      .catch(e => setError(e.response?.data?.error || 'Erro ao estimar'));
-  }, [list.id]);
-
-  function runLookup() {
-    setRunning(true); setError(''); setResults([]);
-    const token = localStorage.getItem('typesend_token');
-    const baseUrl = (import.meta.env.VITE_API_URL || '/api').replace(/\/$/, '');
-
-    // Use fetch with ReadableStream for SSE with auth header
-    const ctrl = new AbortController();
-    fetch(`${baseUrl}/lists/${list.id}/lookup`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}` },
-      signal: ctrl.signal,
-    }).then(async res => {
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-      while (true) {
-        const { done: streamDone, value } = await reader.read();
-        if (streamDone) break;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop();
-        for (const line of lines) {
-          if (!line.startsWith('data: ')) continue;
-          try {
-            const msg = JSON.parse(line.slice(6));
-            if (msg.type === 'progress') {
-              setProgress({ done: msg.done, total: msg.total });
-              setResults(prev => [...prev.slice(-49), { phone: msg.phone, valid: msg.valid, line_type: msg.line_type }]);
-            } else if (msg.type === 'done') {
-              setDone(true); setRunning(false);
-              api.lookupResults(list.id).then(r => setSummary(r.data.summary));
-            } else if (msg.type === 'error') {
-              setError(msg.message); setRunning(false);
-            }
-          } catch {}
-        }
-      }
-    }).catch(e => { if (e.name !== 'AbortError') { setError(e.message); setRunning(false); } });
-
-    return () => ctrl.abort();
-  }
-
-  const pct = progress ? Math.round((progress.done / progress.total) * 100) : 0;
-
-  return (
-    <div className="modal-backdrop" onClick={e => !running && e.target === e.currentTarget && onClose()}>
-      <div className="modal" style={{ maxWidth: 560 }}>
-        <h2 className="modal-title">🔍 Phone Lookup — {list.name}</h2>
-
-        {error && <div className="alert alert-error">{error}</div>}
-
-        {!running && !done && estimate && (
-          <>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 20 }}>
-              {[
-                ['Contatos', estimate.contactCount.toLocaleString('pt-BR')],
-                ['Custo por lookup', `$${estimate.perLookup.toFixed(4)}`],
-                ['Custo total', `$${estimate.totalCost.toFixed(4)}`],
-                ['Saldo disponível', `$${Number(estimate.balance).toFixed(4)}`],
-              ].map(([label, value]) => (
-                <div key={label} style={{ background: '#f9fafb', borderRadius: 8, padding: '12px 16px' }}>
-                  <div style={{ fontSize: 12, color: '#6b7280' }}>{label}</div>
-                  <div style={{ fontSize: 16, fontWeight: 700, fontFamily: 'monospace', marginTop: 2 }}>{value}</div>
-                </div>
-              ))}
-            </div>
-            {!estimate.sufficient && (
-              <div className="alert alert-error">Saldo insuficiente para executar o lookup.</div>
-            )}
-            <p style={{ fontSize: 13, color: '#6b7280', marginBottom: 20 }}>
-              O lookup valida cada número e identifica o tipo de linha (móvel, fixo, VoIP). Útil para filtrar listas e reduzir custos de campanha.
-            </p>
-            <div className="modal-footer">
-              <button className="btn btn-ghost" onClick={onClose}>Cancelar</button>
-              <button className="btn btn-primary" onClick={runLookup} disabled={!estimate.sufficient}>
-                🔍 Executar Lookup (${estimate.totalCost.toFixed(4)})
-              </button>
-            </div>
-          </>
-        )}
-
-        {running && (
-          <div>
-            <div style={{ marginBottom: 12 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginBottom: 6 }}>
-                <span>Processando...</span>
-                <span style={{ fontFamily: 'monospace' }}>{progress?.done || 0} / {progress?.total || 0}</span>
-              </div>
-              <div style={{ background: '#e5e7eb', borderRadius: 999, height: 8 }}>
-                <div style={{ background: 'var(--primary)', borderRadius: 999, height: 8, width: `${pct}%`, transition: 'width 0.3s' }} />
-              </div>
-            </div>
-            <div style={{ maxHeight: 200, overflowY: 'auto', fontSize: 12, fontFamily: 'monospace', background: '#f9fafb', borderRadius: 6, padding: 8 }}>
-              {results.slice(-10).reverse().map((r, i) => (
-                <div key={i} style={{ color: r.valid ? '#16a34a' : '#ef4444', padding: '1px 0' }}>
-                  {r.phone} → {r.line_type || 'unknown'} {r.valid ? '✓' : '✕'}
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {done && (
-          <>
-            <div className="alert alert-success">✅ Lookup concluído!</div>
-            {summary.length > 0 && (
-              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 12 }}>
-                {summary.map(s => {
-                  const meta = LINE_TYPE_LABELS[s.line_type] || LINE_TYPE_LABELS['unknown'];
-                  return (
-                    <div key={s.line_type} style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 8, padding: '8px 14px', textAlign: 'center' }}>
-                      <div style={{ fontSize: 13, color: meta.color, fontWeight: 600 }}>{meta.label}</div>
-                      <div style={{ fontSize: 20, fontWeight: 800 }}>{s.count}</div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-            <div className="modal-footer" style={{ marginTop: 16 }}>
-              <button className="btn btn-primary" onClick={onClose}>Fechar</button>
-            </div>
-          </>
-        )}
-      </div>
-    </div>
-  );
-}
-
 // ── Upload modal (2 steps) ───────────────────────────────────────────────────
 function UploadModal({ onClose, onImported }) {
   const [step, setStep] = useState(1); // 1=upload, 2=configure
@@ -325,13 +173,6 @@ function ContactsDrawer({ list, onClose }) {
 
   const cols = list.columns.filter((c) => c !== list.phone_column).slice(0, 3);
 
-  const LINE_BADGE = {
-    mobile:   { label: '📱 Móvel',    bg: '#f0fdf4', color: '#16a34a' },
-    landline: { label: '☎ Fixo',      bg: '#f3f4f6', color: '#6b7280' },
-    voip:     { label: '💻 VoIP',     bg: '#eff6ff', color: '#3b82f6' },
-    unknown:  { label: '❓ Desc.',    bg: '#fafafa',  color: '#9ca3af' },
-  };
-
   return (
     <div className="modal-backdrop" onClick={(e) => e.target === e.currentTarget && onClose()}>
       <div className="modal" style={{ maxWidth: 780 }}>
@@ -341,7 +182,6 @@ function ContactsDrawer({ list, onClose }) {
             <thead>
               <tr>
                 <th style={{ padding: '8px 10px', background: '#f9fafb', textAlign: 'left', borderBottom: '1px solid #e5e7eb' }}>Telefone</th>
-                <th style={{ padding: '8px 10px', background: '#f9fafb', textAlign: 'left', borderBottom: '1px solid #e5e7eb' }}>Lookup</th>
                 <th style={{ padding: '8px 10px', background: '#f9fafb', textAlign: 'left', borderBottom: '1px solid #e5e7eb' }}>Status</th>
                 {cols.map((c) => (
                   <th key={c} style={{ padding: '8px 10px', background: '#f9fafb', textAlign: 'left', borderBottom: '1px solid #e5e7eb' }}>{c}</th>
@@ -350,20 +190,10 @@ function ContactsDrawer({ list, onClose }) {
             </thead>
             <tbody>
               {data.contacts.map((c) => {
-                const badge = c.lookup_line_type ? LINE_BADGE[c.lookup_line_type] || LINE_BADGE.unknown : null;
                 return (
                   <tr key={c.id} style={{ opacity: c.opted_out ? 0.5 : 1 }}>
                     <td style={{ padding: '8px 10px', borderBottom: '1px solid #f3f4f6', fontFamily: 'monospace', fontSize: 12 }}>
                       {c.phone}
-                    </td>
-                    <td style={{ padding: '8px 10px', borderBottom: '1px solid #f3f4f6' }}>
-                      {badge ? (
-                        <span style={{ background: badge.bg, color: badge.color, padding: '2px 7px', borderRadius: 999, fontSize: 11, fontWeight: 600 }}>
-                          {badge.label}
-                        </span>
-                      ) : (
-                        <span style={{ color: '#d1d5db', fontSize: 11 }}>—</span>
-                      )}
                     </td>
                     <td style={{ padding: '8px 10px', borderBottom: '1px solid #f3f4f6' }}>
                       {c.opted_out ? (
@@ -405,7 +235,6 @@ export default function ListsPage() {
   const [listData, setListData]   = useState([]);
   const [showUpload, setShowUpload] = useState(false);
   const [viewList, setViewList]   = useState(null);
-  const [lookupList, setLookupList] = useState(null);
   const [loading, setLoading]     = useState(true);
   const [success, setSuccess]     = useState('');
 
@@ -487,8 +316,6 @@ export default function ListsPage() {
                       <div style={{ display: 'flex', gap: 8 }}>
                         <button className="btn btn-ghost" style={{ fontSize: 12, padding: '4px 10px' }}
                           onClick={() => setViewList(l)}>Ver contatos</button>
-                        <button className="btn btn-ghost" style={{ fontSize: 12, padding: '4px 10px' }}
-                          onClick={() => setLookupList(l)}>🔍 Lookup</button>
                         <button className="btn btn-danger" style={{ fontSize: 12, padding: '4px 10px' }}
                           onClick={() => handleDelete(l.id, l.name)}>Excluir</button>
                       </div>
@@ -503,7 +330,6 @@ export default function ListsPage() {
 
       {showUpload  && <UploadModal onClose={() => setShowUpload(false)} onImported={handleImported} />}
       {viewList    && <ContactsDrawer list={viewList} onClose={() => setViewList(null)} />}
-      {lookupList  && <LookupModal list={lookupList} onClose={() => setLookupList(null)} />}
     </div>
   </UserLayout>
   );

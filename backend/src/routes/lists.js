@@ -4,7 +4,6 @@ const { parse }  = require('csv-parse/sync');
 const { v4: uuidv4 } = require('uuid');
 const { one, all, run, tx } = require('../db/database');
 const { normalizePhone } = require('../services/phoneNormalizer');
-const { estimateLookup, runListLookup } = require('../services/lookup');
 const { authMiddleware, tenantOnly } = require('../middleware/auth');
 const { writeLog } = require('./logs');
 
@@ -95,14 +94,9 @@ router.get('/:id/contacts', async (req, res) => {
 
     const contacts = await all(`
       SELECT lc.*,
-             lr.valid         as lookup_valid,
-             lr.line_type     as lookup_line_type,
-             lr.carrier       as lookup_carrier,
-             lr.looked_up_at,
              CASE WHEN o.phone IS NOT NULL THEN true ELSE false END as opted_out
       FROM list_contacts lc
-      LEFT JOIN lookup_results lr ON lr.contact_id = lc.id
-      LEFT JOIN optouts        o  ON o.phone = lc.phone
+      LEFT JOIN optouts o ON o.phone = lc.phone
       WHERE lc.list_id = $1
       LIMIT $2 OFFSET $3
     `, [req.params.id, Number(limit), Number(offset)]);
@@ -178,75 +172,6 @@ router.delete('/:listId/segments/:segId', async (req, res) => {
   try {
     await run('DELETE FROM segments WHERE id = $1 AND tenant_id = $2', [req.params.segId, req.auth.tenantId]);
     res.status(204).send();
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-/* ── Phone Lookup ────────────────────────────────────────────────────────── */
-
-// Estimate cost before running
-router.get('/:id/lookup/estimate', async (req, res) => {
-  try {
-    const list = await one('SELECT id, contact_count FROM lists WHERE id = $1 AND tenant_id = $2', [req.params.id, req.auth.tenantId]);
-    if (!list) return res.status(404).json({ error: 'Lista não encontrada' });
-    const estimate = estimateLookup(list.contact_count);
-    const tenant   = await one('SELECT credit_balance FROM tenants WHERE id = $1', [req.auth.tenantId]);
-    const balance  = parseFloat(tenant.credit_balance);
-    res.json({ ...estimate, balance, sufficient: balance >= estimate.totalCost });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Run lookup (async — streams SSE progress)
-router.post('/:id/lookup', async (req, res) => {
-  try {
-    const list = await one('SELECT id, name, contact_count FROM lists WHERE id = $1 AND tenant_id = $2', [req.params.id, req.auth.tenantId]);
-    if (!list) return res.status(404).json({ error: 'Lista não encontrada' });
-
-    res.setHeader('Content-Type', 'text/event-stream');
-    res.setHeader('Cache-Control', 'no-cache');
-    res.setHeader('Connection', 'keep-alive');
-    res.flushHeaders();
-
-    const send = (data) => res.write(`data: ${JSON.stringify(data)}\n\n`);
-
-    try {
-      const summary = await runListLookup(list.id, req.auth.tenantId, ({ done, total, phone, result }) => {
-        send({ type: 'progress', done, total, phone, valid: result.valid, line_type: result.line_type });
-      });
-      writeLog(req.auth.tenantId, req.auth.sub, 'info', 'lookup', `Lookup concluído: ${list.name}`, summary);
-      send({ type: 'done', ...summary });
-    } catch (err) {
-      send({ type: 'error', message: err.message });
-    }
-    res.end();
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Get lookup results for a list
-router.get('/:id/lookup/results', async (req, res) => {
-  try {
-    const list = await one('SELECT id FROM lists WHERE id = $1 AND tenant_id = $2', [req.params.id, req.auth.tenantId]);
-    if (!list) return res.status(404).json({ error: 'Lista não encontrada' });
-
-    const { limit = 100, offset = 0, line_type } = req.query;
-    let q = 'SELECT * FROM lookup_results WHERE list_id = $1';
-    const params = [req.params.id];
-    let idx = 2;
-    if (line_type) { q += ` AND line_type = $${idx++}`; params.push(line_type); }
-    q += ` ORDER BY looked_up_at DESC LIMIT $${idx++} OFFSET $${idx++}`;
-    params.push(Number(limit), Number(offset));
-
-    const [results, total, summary] = await Promise.all([
-      all(q, params),
-      one('SELECT COUNT(*) as n FROM lookup_results WHERE list_id = $1', [req.params.id]),
-      all('SELECT line_type, COUNT(*) as count FROM lookup_results WHERE list_id = $1 GROUP BY line_type', [req.params.id]),
-    ]);
-    res.json({ results, total: parseInt(total.n), summary });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
